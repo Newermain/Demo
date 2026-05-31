@@ -42,7 +42,7 @@ get_common_params() {
     echo -e "${CYAN}════════════════════════════════════════════════════════════════${NC}"
     echo ""
     
-    echo -e "${YELLOW}Доступные сетевые интерфейсы:${NC}"
+    echo -e "${YELLOW}Доступные сетевые интерфейсы: ${NC}"
     ls /sys/class/net/ | grep -v lo
     echo ""
     read -p "Введите имя сетевого интерфейса: " INTERFACE

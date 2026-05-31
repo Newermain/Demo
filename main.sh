@@ -305,7 +305,7 @@ options {
 
     pid-file none;
 
-    listen-on { $DNS_IP; };
+    listen-on { any; };
     listen-on-v6 { none; };
     forwarders { 77.88.8.8; };
 
@@ -726,6 +726,10 @@ setup_samba_dc() {
     echo -e "${GREEN}✓ Samba DC настроен (домен: $DOMAIN)${NC}"
 
     echo "На клиенте не забудьте установить пакет авторизации: apt-get update && apt-get install -y task-auth-ad-sssd"
+    echo ""
+    echo "ПЕРЕД ЭТИМ БЛЯЯЯЯЯЯ, НАПИШИ В /etc/resolv.conf пж 192.168.0.2 (DNS-сервер BIND)"
+    echo "потому что в рот я ебал ALT! ну и потом, ВОЙДИТЕ НАХУЙ В ДОМЕН"
+    echo ""
     echo "Также, можно поставить управляющий: apt-get install -y libnss-role"
     echo "Необходимо добавить wheel к группе hq: roleadd hq wheel"
 
@@ -821,10 +825,16 @@ setup_ntp_server() {
     
     apt-get install -y chrony
     
-    cat > /etc/chrony/chrony.conf <<EOF
+    cat > /etc/chrony.conf <<EOF
 server ntp1.vniiftri.ru iburst prefer minstratum 4
 local stratum 5
 allow 0.0.0.0/0
+
+driftfile /var/lib/chrony/drift
+makestep 1.0 3
+rtcsync
+ntsdumpdir /var/lib/chrony
+logdir /var/log/chrony
 EOF
     
     systemctl enable --now chronyd
@@ -845,6 +855,11 @@ setup_ntp_client() {
     
     cat > /etc/chrony/chrony.conf <<EOF
 server $NTP_SERVER iburst
+driftfile /var/lib/chrony/drift
+makestep 1.0 3
+rtcsync
+ntsdumpdir /var/lib/chrony
+logdir /var/log/chrony
 EOF
     
     systemctl enable --now chronyd
@@ -1045,29 +1060,15 @@ setup_lamp() {
     
     PHP_FILE="/var/www/html/index.php"
 
-    update_php_var() {
-        local var_name=$1
-        local var_value=$2
-        local file=$3
-
-        # Проверяем, есть ли переменная в файле (активная или закомментированная)
-        if grep -q "^\s*\\$var_name\s*=" "$file"; then
-            # Строка есть — жестко правим значение
-            sed -i "s|^\s*\\$var_name\s*=.*|\$$var_name = \"$var_value\";|" "$file"
-        elif grep -q "^\s*#\s*\\$var_name\s*=" "$file" || grep -q "^\s*//\s*\\$var_name\s*=" "$file"; then
-            # Строка закомментирована (# или //) — раскомментируем и правим значение
-            sed -i "s|^.*\\$var_name\s*=.*|\$$var_name = \"$var_value\";|" "$file"
-        else
-            # Строки вообще нет — дописываем её сразу после тега <?php
-            sed -i "/<?php/a \$$var_name = \"$var_value\";" "$file"
-        fi
-    }    
-
-    update_php_var "username" "$DB_USER" "$PHP_FILE"
-    update_php_var "password" "$DB_PASS" "$PHP_FILE"
-    update_php_var "dbname"   "$DB_NAME" "$PHP_FILE"
+    echo "----"
+    echo "ДОБАВИТЬ В ФАЙЛ /var/www/html/index.php СЛЕДУЮЩИЕ СТРОКИ"
+    echo ""
+    echo "$dbname="webdb"; $password="P@ssw0rd"; $username = "webc";"
+    echo "----"
 
     systemctl enable --now mariadb
+
+    sleep 5
 
     # 1. Засылаем пачку команд под рутом
     mariadb -u root <<EOF
@@ -1075,6 +1076,8 @@ setup_lamp() {
     CREATE USER 'webc'@'localhost' IDENTIFIED BY 'P@ssw0rd';
     GRANT ALL PRIVILEGES ON webdb.* TO 'webc'@'localhost' WITH GRANT OPTION;
 EOF
+
+    sleep 5
 
     # 2. Заливаем дамп
     mariadb -u webc -p'P@ssw0rd' -D webdb < /mnt/web/dump.sql    
@@ -1084,13 +1087,15 @@ EOF
     echo "ТАКЖЕ! Нужно настроить на HQ-RTR и BR-RTR трансляцию портов:"
     echo "ip nat source static tcp <IP-АДРЕС_УСТРОЙСТВА_ЛОКАЛЬНОЙ_СЕТИ> <ПОРТ_УСТРОЙСТВА_ЛОКАЛЬНОЙ_СЕТИ> <ВНЕШНИЙ_IP-АДРЕС_УСТРОЙСТВА> <ПОРТ_ДЛЯ_ОБРАЩЕНИЯ_ИЗ_ВНЕШНЕЙ_СЕТИ>"
     echo "Прокидывается IP-адрес HQ-SRV с портом 80 на порт 8080 у HQ-RTR:"
-    echo "ip nat source static tcp [IP-АДРЕС_HQ-SRV] 80 [IP-АДРЕС_HQ-RTR-GLOBAL (ISP)] 8080"
+    echo "ip nat source static tcp [IP-АДРЕС_HQ-SRV] 80 [IP-АДРЕС_HQ-RTR-GLOBAL (к ISP)] 8080"
     echo "Прокидывается IP-адрес HQ-SRV с портом 2026 на порт 2026 у HQ-RTR:"
-    echo "ip nat source static tcp [IP-АДРЕС_HQ-SRV] 2026 [IP-АДРЕС_HQ-RTR-GLOBAL (ISP)] 2026"
+    echo "ip nat source static tcp [IP-АДРЕС_HQ-SRV] 2026 [IP-АДРЕС_HQ-RTR-GLOBAL (к ISP)] 2026"
     echo "Прокидывается IP-адрес BR-SRV с портом 8080 на порт 8080 у BR-RTR:"
-    echo "ip nat source static tcp [IP-АДРЕС_BR-SRV] 8080 [IP-АДРЕС_BR-RTR-GLOBAL (ISP)] 8080"
+    echo "ip nat source static tcp [IP-АДРЕС_BR-SRV] 8080 [IP-АДРЕС_BR-RTR-GLOBAL (к ISP)] 8080"
     echo "Прокидывается IP-адрес BR-SRV с портом 2026 на порт 2026 у BR-RTR:"
-    echo "ip nat source static tcp [IP-АДРЕС_BR-SRV] 2026 [IP-АДРЕС_BR-RTR-GLOBAL (ISP)] 2026"
+    echo "ip nat source static tcp [IP-АДРЕС_BR-SRV] 2026 [IP-АДРЕС_BR-RTR-GLOBAL (к ISP)] 2026"
+
+    systemctl enable --now httpd2
 
     read -p "Нажми Enter..."
 }
@@ -1100,15 +1105,13 @@ setup_reverse_proxy() {
     echo -e "${BLUE}=== Настройка Nginx reverse proxy ===${NC}"
     echo ""
     
-    echo -e "${YELLOW}Введите настройки для проксируемых доменов (по одному):${NC}"
-    
     apt-get install -y nginx
 
     while true; do
-        read -p "Введите доменное имя (пример, web.au-team.irpo) (или Enter для завершения): " DOMAIN_NAME
+        read -p "Введите доменное имя (пример, web.au-team.irpo или docker.au-team.irpo) (или Enter для завершения): " DOMAIN_NAME
         [[ -z "$DOMAIN_NAME" ]] && break
-        read -p "Введите IP-адрес бекенда: " BACKEND_IP
-        read -p "Введите порт бекенда: " BACKEND_PORT
+        read -p "Введите IP-адрес бекенда (172.16.1.2 или 172.16.2.2): " BACKEND_IP
+        read -p "Введите порт бекенда (8080): " BACKEND_PORT
         
         cat >> /etc/nginx/sites-available.d/default.conf <<EOF
 server {
@@ -1410,15 +1413,8 @@ setup_cups_server_v3() {
     systemctl enable --now cups
     cupsctl --share-printers --remote-any
 
-    if ss -tulpn | grep -q ":631"; then
-        echo -e "${GREEN}✓ CUPS принт-сервер установлен${NC}"
-    else
-        echo -e "${RED}CUPS принт-сервер не установлен!${NC}"
-        exit 1
-    fi
-
-    echo "На HQ-CLI прописать в /etc/hosts сервак, ну либо с помощью samba-tool на BR-SRV прописать DNS запись:"
-    echo "samba-tool domain dns record add au-team.irpo 237.84.2.178"
+    echo "На HQ-CLI прописать в /etc/hosts сервак HQ-SRV, ну либо с помощью samba-tool на BR-SRV прописать DNS запись:"
+    echo "samba-tool domain dns record add hq-srv.au-team.irpo"
 
     echo "Также на HQ-CLI залетаем в Настройки, Принтеры и добавляем принтер блин. Делаем пробную печать."
     echo "По итогу, на HQ-SRV в ls -l /var/spool/cups/ создаются файлы-пробники"
@@ -1543,7 +1539,7 @@ show_main_menu() {
     clear
     echo -e "${CYAN}╔══════════════════════════════════════════════════════════════════════╗${NC}"
     echo -e "${CYAN}║                    УНИВЕРСАЛЬНЫЙ СКРИПТ НАСТРОЙКИ                    ║${NC}"
-    echo -e "${CYAN}║                      ALT LINUX / Сис АДМИН                       ║${NC}"
+    echo -e "${CYAN}║                      ALT LINUX / Сис АДМИН                           ║${NC}"
     echo -e "${CYAN}╚══════════════════════════════════════════════════════════════════════╝${NC}"
     echo ""
     echo -e "${YELLOW}Текущее устройство:${NC} $(hostname)"

@@ -60,17 +60,17 @@ module1_menu() {
         echo -e "${CYAN}║                       МОДУЛЬ 1 - СЕТЬ                         ║${NC}"
         echo -e "${CYAN}╚══════════════════════════════════════════════════════════════╝${NC}"
         echo ""
-        echo "1) Настройка имени хоста и статического IP"
-        echo "2) Настройка DHCP-клиента"
-        echo "3) Настройка DNS-резолвера"
-        echo "4) Настройка VLAN на интерфейсе"
-        echo "5) Настройка безопасного SSH (порт 2026, баннер)"
-        echo "6) Настройка DHCP-сервера (только команды для EcoRouter)"
-        echo "7) Настройка DNS-сервера BIND"
-        echo "8) Настройка часового пояса"
-        echo "9) Создание локальных пользователей"
-        echo "10) Настройка NAT и IP forwarding"
-        echo "11) Настройка DHCP-сервера"
+        echo "1) Настройка имени хоста и статического IP (все хосты)"
+        echo "2) Настройка DHCP-клиента (клиент)"
+        echo "3) Настройка DNS-резолвера (HQ-SRV)"
+        echo "4) Настройка VLAN на интерфейсе (BR и HQ RTRы)"
+        echo "5) Настройка безопасного SSH (порт 2026, баннер) (HQ-SRV/BR-SRV)"
+        echo "6) Настройка DHCP-сервера (только команды для EcoRouter) (BR и HQ RTRы)"
+        echo "7) Настройка DNS-сервера BIND (HQ-SRV)"
+        echo "8) Настройка часового пояса (все хосты)"
+        echo "9) Создание локальных пользователей (HQ и BR SRVы и RTRы)"
+        echo "10) Настройка NAT и IP forwarding (HQ и BR RTRы)"
+        echo "11) Настройка DHCP-сервера (EcoRouter клон 6 пункта) (BR и HQ RTRы)"
         echo "12) Вернуться в главное меню"
         echo ""
         read -p "Выберите пункт: " choice
@@ -617,18 +617,18 @@ module2_menu() {
         echo -e "${CYAN}║                     МОДУЛЬ 2 - СЕРВИСЫ                        ║${NC}"
         echo -e "${CYAN}╚══════════════════════════════════════════════════════════════╝${NC}"
         echo ""
-        echo "1) Настройка Samba Domain Controller"
-        echo "2) Настройка RAID 0"
-        echo "3) Настройка NFS сервера"
-        echo "4) Настройка NFS клиента"
-        echo "5) Настройка NTP сервера (chrony)"
-        echo "6) Настройка NTP клиента"
-        echo "7) Настройка Ansible"
-        echo "8) Настройка Docker + testapp"
-        echo "9) Настройка LAMP веб-приложения"
-        echo "10) Настройка Nginx reverse proxy"
+        echo "1) Настройка Samba Domain Controller (BR-SRV)"
+        echo "2) Настройка RAID 0 (HQ-SRV)"
+        echo "3) Настройка NFS сервера (HQ-SRV)"
+        echo "4) Настройка NFS клиента (HQ-CLI)"
+        echo "5) Настройка NTP сервера (chrony) (ISP)"
+        echo "6) Настройка NTP клиента (все тачки)"
+        echo "7) Настройка Ansible (BR-SRV)"
+        echo "8) Настройка Docker + testapp (BR-SRV)"
+        echo "9) Настройка LAMP веб-приложения (HQ-SRV)"
+        echo "10) Настройка Nginx reverse proxy (ISP)"
         echo "11) Web-based аутентификация (ISP)"
-        echo "12) Настройка Яндекс Браузера"
+        echo "12) Настройка Яндекс Браузера (HQ-CLI)"
         echo "13) Вернуться в главное меню"
         echo ""
         read -p "Выберите пункт: " choice
@@ -849,6 +849,8 @@ EOF
     
     systemctl enable --now chronyd
     
+    echo "На HQ и BR RTRах прописать: ntp server [IP-адрес ISP]"
+
     echo -e "${GREEN}✓ NTP клиент настроен на сервер $NTP_SERVER${NC}"
     chronyc sources
     read -p "Нажми Enter..."
@@ -1183,13 +1185,13 @@ module3_menu() {
         echo -e "${CYAN}║                   МОДУЛЬ 3 - БЕЗОПАСНОСТЬ                    ║${NC}"
         echo -e "${CYAN}╚══════════════════════════════════════════════════════════════╝${NC}"
         echo ""
-        echo "1) Импорт пользователей из CSV в домен"
-        echo "2) Настройка центра сертификации (ГОСТ)"
-        echo "3) Настройка Nginx HTTPS с ГОСТ"
-        echo "4) Установка корневого сертификата"
-        echo "5) Настройка CUPS принт-сервера"
-        echo "6) Настройка CUPS клиента"
-        echo "7) Настройка IP-туннеля до уровня шифрования"
+        echo "1) Импорт пользователей из CSV в домен (BR-SRV)"
+        echo "2) Настройка центра сертификации (ГОСТ) (HQ-SRV)"
+        echo "3) Настройка Nginx HTTPS с ГОСТ (ISP)"
+        echo "4) Установка корневого сертификата (HQ-CLI)"
+        echo "5) Настройка CUPS принт-сервера (HQ-SRV)"
+        echo "6) Настройка CUPS клиента (клиент, но необяз, СКИПНУТЬ)"
+        echo "7) Настройка IP-туннеля до уровня шифрования (HQ и BR RTRы)"
         echo "8) Вернуться в главное меню"
         echo ""
         read -p "Выберите пункт: " choice
@@ -1218,6 +1220,9 @@ import_users_csv() {
     read -p "Введите путь к CSV файлу (например, /mnt/Users.csv): " CSV_FILE
     read -p "Введите пароль администратора домена: " ADMIN_PASS
     read -p "Введите Realm (например, AU-TEAM.IRPO): " REALM
+
+    read -p "Введите первое значение домена перед точкой (например, au-team при полном домене au-team.irpo): " DOMAIN
+    read -p "Введите второе значение домена после точки (например, irpo при полном домене au-team.irpo): " DOMAIN2
     
     if [ ! -f "$CSV_FILE" ]; then
         echo "Ошибка: Файл $CSV_FILE не найден!"
@@ -1229,7 +1234,7 @@ import_users_csv() {
     OU_LIST=$(awk -F ';' 'NR>1 {print $5}' "$CSV_FILE" | sort | uniq)
     echo "$OU_LIST" | while read -r ou; do
         if [ -z "$ou" ]; then continue; fi
-        samba-tool ou add "OU=$ou,DC=au-team,DC=irpo"
+        samba-tool ou add "OU=$ou,DC=$DOMAIN,DC=$DOMAIN2"
     done
 
     echo -e "${BLUE}[2/3] Создание и импорт пользователей..${NC}"
@@ -1296,6 +1301,8 @@ setup_ca_gost() {
     echo "vim /etc/openssh/sshd_config и PermitRootLogin yes, затем перезапустить systemctl restart sshd"
 
     read -p "Как только все сделали, нажмите Enter, чтобы продолжить..."
+
+    echo -e "${BLUE}Копирование сертификатов на ISP...${NC}"
 
     for hostname_domain in $HOSTNAMES; do
         scp ${hostname_domain}.key root@${ISP_IP}:/root/
@@ -1387,7 +1394,7 @@ install_root_certificate() {
 
     echo "ЕСЛИ ПРОТОКОЛ НЕ ПОДДЕРЖИВАЕТСЯ, КОГДА ВЫ ЗАШЛИ НА КЛИЕНТЕ:"
     echo "Заходим на сайт cryptopro.ru на HQ-CLI"
-    echo "Выбираем Продукты -> КриптоПро SCP -> Скачать КриптоПро SCP"
+    echo "Выбираем Продукты -> КриптоПро CSP -> Скачать КриптоПро CSP"
     echo "Заполняем данные, выбираем скачать для Linux RPM"
     echo "Запускаем, в наборе для установки пометить <Импортировать корневые сертификаты из ОС>"
 
@@ -1396,36 +1403,28 @@ install_root_certificate() {
 
 setup_cups_server_v3() {
     clear
-    echo -e "${BLUE}=== Настройка CUPS принт-сервера ===${NC}"
+    echo -e "${BLUE}=== Настройка CUPS принт-сервера (HQ-SRV) ===${NC}"
     echo ""
     
-    read -p "Введите имя принтера (например, Virtual_PDF_Printer): " PRINTER_NAME
-    echo -e "${YELLOW}Введите сети для доступа к принтеру (по одной, Enter для завершения):${NC}"
-    
     apt-get install -y cups cups-pdf
-    
-    cat > /etc/cups/cupsd.conf <<'CUPS_CONF'
-Listen 0.0.0.0:631
-<Location />
-  Order allow,deny
-  Allow localhost
-CUPS_CONF
-    
-    while true; do
-        read -p "Разрешить сеть (например, 192.168.200.0/24): " ALLOW_NET
-        [[ -z "$ALLOW_NET" ]] && break
-        echo "  Allow $ALLOW_NET" >> /etc/cups/cupsd.conf
-    done
-    echo "</Location>" >> /etc/cups/cupsd.conf
-    
-    cupsctl --share-printers --remote-any
     systemctl enable --now cups
-    systemctl restart cups
+    cupsctl --share-printers --remote-any
+
+    if ss -tulpn | grep -q ":631"; then
+        echo -e "${GREEN}✓ CUPS принт-сервер установлен${NC}"
+    else
+        echo -e "${RED}CUPS принт-сервер не установлен!${NC}"
+        exit 1
+    fi
+
+    echo "На HQ-CLI прописать в /etc/hosts сервак, ну либо с помощью samba-tool на BR-SRV прописать DNS запись:"
+    echo "samba-tool domain dns record add au-team.irpo 237.84.2.178"
+
+    echo "Также на HQ-CLI залетаем в Настройки, Принтеры и добавляем принтер блин. Делаем пробную печать."
+    echo "По итогу, на HQ-SRV в ls -l /var/spool/cups/ создаются файлы-пробники"
+
     
-    lpadmin -p "$PRINTER_NAME" -E -v cups-pdf:/ -m everywhere 2>/dev/null
-    lpoptions -d "$PRINTER_NAME"
-    
-    echo -e "${GREEN}✓ CUPS принт-сервер настроен (принтер: $PRINTER_NAME)${NC}"
+    echo -e "${GREEN}✓ CUPS принт-сервер настроен."
     read -p "Нажми Enter..."
 }
 

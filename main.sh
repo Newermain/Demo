@@ -1,19 +1,16 @@
 #!/bin/bash
-
 # =============================================
 # УНИВЕРСАЛЬНЫЙ СКРИПТ НАСТРОЙКИ ALT LINUX
 # Специальность: Сетевое и системное администрирование
 # Модули: 1, 2, 3
 # Все параметры запрашиваются интерактивно!
 # =============================================
-
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 CYAN='\033[0;36m'
 NC='\033[0m'
-
 # Проверка прав root
 if [[ $EUID -ne 0 ]]; then
     echo -e "${RED}Ошибка: Запусти с sudo или от root!${NC}"
@@ -33,8 +30,6 @@ NTP_SERVER=""
 ANSIBLE_PASSWORD=""
 DB_PASSWORD=""
 PRINTER_SERVER=""
-CA_DAYS=""
-
 # ==================== ФУНКЦИЯ ЗАПРОСА ПАРАМЕТРОВ ====================
 get_common_params() {
     echo -e "${CYAN}════════════════════════════════════════════════════════════════${NC}"
@@ -42,7 +37,7 @@ get_common_params() {
     echo -e "${CYAN}════════════════════════════════════════════════════════════════${NC}"
     echo ""
     
-    echo -e "${YELLOW}Доступные сетевые интерфейсы: ${NC}"
+    echo -e "${YELLOW}Доступные сетевые интерфейсы:${NC}"
     ls /sys/class/net/ | grep -v lo
     echo ""
     read -p "Введите имя сетевого интерфейса: " INTERFACE
@@ -75,7 +70,8 @@ module1_menu() {
         echo "8) Настройка часового пояса"
         echo "9) Создание локальных пользователей"
         echo "10) Настройка NAT и IP forwarding"
-        echo "11) Вернуться в главное меню"
+        echo "11) Настройка DHCP-сервера"
+        echo "12) Вернуться в главное меню"
         echo ""
         read -p "Выберите пункт: " choice
         
@@ -90,7 +86,8 @@ module1_menu() {
             8) setup_timezone ;;
             9) setup_local_users ;;
             10) setup_nat_forwarding ;;
-            11) break ;;
+            11) setup_dhcp_server ;;
+            12) break ;;
             *) echo -e "${RED}Неверный выбор!${NC}"; sleep 2 ;;
         esac
     done
@@ -288,6 +285,10 @@ setup_dns_server() {
     read -p "Введите IP-адрес DNS-сервера (на котором настраиваем): " DNS_IP
     read -p "Введите доменную зону (например, au-team.irpo): " ZONE
     read -p "Введите DNS-серверы пересылки (forwarders) через пробел: " FORWARDERS
+
+    echo "Пример обратной зоны: 100.168.192.in-addr.arpa. (ВБИТЬ ТОЛЬКО НАЧАЛО, IP-адрес)"
+    read -p "Введите обратный IP-адрес первой зоны, если она есть (если нет Enter): " ZONE1_IP
+    read -p "Введите обратный IP-адрес второй зоны, если она есть (если нет Enter): " ZONE2_IP
     
     apt-get update
     apt-get install -y bind bind-utils
@@ -295,37 +296,191 @@ setup_dns_server() {
     # Настройка options.conf
     cat > /var/lib/bind/etc/options.conf <<EOF
 options {
-    directory "/var/lib/bind";
-    listen-on { $DNS_IP; 127.0.0.1; };
+    version "unknown";
+    directory "/etc/bind/zone";
+    dump-file "/var/run/named/named_dump.db";
+    statistics-file "/var/run/named/named.stats";
+    recursing-file "/var/run/named/named.recursing";
+    secroots-file "/var/run/named/named.secroots";
+
+    pid-file none;
+
+    listen-on { $DNS_IP; };
     listen-on-v6 { none; };
+    forwarders { 77.88.8.8; };
+
     allow-query { any; };
-    forwarders { $FORWARDERS; };
-    recursion yes;
-    dnssec-validation no;
 };
+
 EOF
     
     # Добавление зоны
     cat >> /var/lib/bind/etc/rfc1912.conf <<EOF
 zone "$ZONE" {
     type master;
-    file "zone/$ZONE";
+    file "$ZONE";
+};
+
+zone "$ZONE1_IP.in-addr.arpa" {
+    type master;
+    file "$ZONE1_IP.in-addr.arpa";
+};
+
+zone "$ZONE2_IP.in-addr.arpa" {
+    type master;
+    file "$ZONE2_IP.in-addr.arpa";
 };
 EOF
-    
-    mkdir -p /var/lib/bind/etc/zone
-    cat > /var/lib/bind/etc/zone/$ZONE <<EOF
-\$TTL 86400
-@   IN  SOA ns1.$ZONE. admin.$ZONE. (2025122601 3600 1800 604800 86400)
-@       IN  NS  ns1.$ZONE.
-ns1     IN  A   $DNS_IP
+
+    cp /var/lib/bind/etc/zone/empty /var/lib/bind/etc/zone/$ZONE
+    cp /var/lib/bind/etc/zone/empty /var/lib/bind/etc/zone/$ZONE1_IP.in-addr.arpa
+    cp /var/lib/bind/etc/zone/empty /var/lib/bind/etc/zone/$ZONE2_IP.in-addr.arpa
+
+    ZONE_FILE="/var/lib/bind/etc/zone/$ZONE"
+    SERIAL=$(date +%Y%m%d00)
+
+    echo "Настраиваем SOA и NS записи..."
+    sed -i "s/localhost\./${ZONE}./g" "$ZONE_FILE"
+    sed -i "s/root\.${ZONE}\./root.${ZONE}./g" "$ZONE_FILE" # На всякий случай корректируем root
+    sed -i "s/2025110500/${SERIAL}/" "$ZONE_FILE"
+
+    echo "Добавляем базовые записи для самой зоны..."
+    cat << EOF >> "$ZONE_FILE"
+            IN      A       $DNS_IP
 EOF
-    
-    chgrp -R named /var/lib/bind/etc/zone/
-    systemctl enable --now bind
-    
-    echo -e "${GREEN}✓ DNS-сервер настроен${NC}"
-    read -p "Нажми Enter..."
+
+    echo "--------------------------------------------------------"
+    echo "Теперь введите хосты (A-записи). Для завершения введите 'exit'"
+    echo "Пример ввода: hq-srv 192.168.100.2"
+    echo "--------------------------------------------------------"    
+
+    while true; do
+        read -p "Хост и IP (через пробел): " HOST IP
+        
+        # Если пользователь ввел exit, останавливаем цикл
+        if [ "$HOST" = "exit" ] || [ -z "$HOST" ]; then
+            break
+        fi
+        
+        # Если IP не введен, просим повторить
+        if [ -z "$IP" ]; then
+            echo "Ошибка: Вы не ввели IP для хоста $HOST. Попробуйте еще раз."
+            continue
+        fi
+        
+        # Дописываем строку в файл зоны с форматированием (табуляцией)
+        printf "%-7s IN      A       %s\n" "$HOST" "$IP" >> "$ZONE_FILE"
+    done
+
+    echo "---"
+    echo "Готово! Файл зоны успешно создан и заполнен: $ZONE_FILE"
+    echo "Вот его содержимое:"
+    cat "$ZONE_FILE"
+
+    echo "Создание обратной зоны для $ZONE1_IP.in-addr.arpa..."
+
+    ZONE1_FILE="/var/lib/bind/etc/zone/$ZONE1_IP.in-addr.arpa"
+    ZONE1_IP_FULL="$ZONE1_IP.in-addr.arpa"
+    SERIAL1=$(date +%Y%m%d00)
+
+    echo "Настраиваем SOA и NS записи..."
+    sed -i "s/localhost\./${ZONE}./g" "$ZONE1_FILE"
+    sed -i "s/root\.${ZONE}\./root.${ZONE}./g" "$ZONE1_FILE" # На всякий случай корректируем root
+    sed -i "s/2025110500/${SERIAL1}/" "$ZONE1_FILE"
+
+    echo "--------------------------------------------------------"
+    echo "Теперь введите PTR-записи. Для завершения введите 'exit'"
+    echo "Пример ввода:"
+    echo "Последний октет IP: 1"
+    echo "Хостнейм: hq-rtr"
+    echo "--------------------------------------------------------"
+
+    while true; do
+        # 1. Запрашиваем последний октет IP-адреса (например, 1 или 2 из твоего скриншота)
+        read -p "Последний октет IP (цифра): " IP_OCTET
+        
+        # Если ввели exit или ничего, выходим
+        if [ "$IP_OCTET" = "exit" ] || [ -z "$IP_OCTET" ]; then
+            break
+        fi
+        
+        # 2. Запрашиваем только имя хоста (например, hq-srv)
+        read -p "Хостнейм (без домена): " HOST_NAME
+        
+        if [ -z "$HOST_NAME" ]; then
+            echo "Ошибка: имя хоста не может быть пустым."
+            continue
+        fi
+        
+        # Формируем полную FQDN запись с точкой на конце, используя доменную зону из начала скрипта
+        # Переменная $ZONE_NAME должна быть объявлена ранее (например, au-team.irpo)
+        FULL_FQDN="${HOST_NAME}.${ZONE}."
+        
+        # Дописываем строку в файл обратной зоны с красивым выравниванием
+        printf "%-8s IN      PTR     %s\n" "$IP_OCTET" "$FULL_FQDN" >> "$ZONE1_FILE"
+        
+        echo "Запись добавлена: $IP_OCTET IN PTR $FULL_FQDN"
+        echo "---"
+    done
+
+    echo "Создание обратной зоны для $ZONE2_IP.in-addr.arpa..."
+
+    ZONE2_FILE="/var/lib/bind/etc/zone/$ZONE2_IP.in-addr.arpa"
+    ZONE2_IP_FULL="$ZONE2_IP.in-addr.arpa"
+    SERIAL2=$(date +%Y%m%d00)
+
+    echo "Настраиваем SOA и NS записи..."
+    sed -i "s/localhost\./${ZONE}./g" "$ZONE2_FILE"
+    sed -i "s/root\.${ZONE}\./root.${ZONE}./g" "$ZONE2_FILE" # На всякий случай корректируем root
+    sed -i "s/2025110500/${SERIAL2}/" "$ZONE2_FILE"
+
+    echo "--------------------------------------------------------"
+    echo "Теперь введите PTR-записи. Для завершения введите 'exit'"
+    echo "Пример ввода:"
+    echo "Последний октет IP: 1"
+    echo "Хостнейм: hq-rtr"
+    echo "--------------------------------------------------------"
+
+    while true; do
+        # 1. Запрашиваем последний октет IP-адреса (например, 1 или 2 из твоего скриншота)
+        read -p "Последний октет IP (цифра): " IP_OCTET
+        
+        # Если ввели exit или ничего, выходим
+        if [ "$IP_OCTET" = "exit" ] || [ -z "$IP_OCTET" ]; then
+            break
+        fi
+        
+        # 2. Запрашиваем только имя хоста (например, hq-srv)
+        read -p "Хостнейм (без домена): " HOST_NAME
+        
+        if [ -z "$HOST_NAME" ]; then
+            echo "Ошибка: имя хоста не может быть пустым."
+            continue
+        fi
+        
+        # Формируем полную FQDN запись с точкой на конце, используя доменную зону из начала скрипта
+        # Переменная $ZONE_NAME должна быть объявлена ранее (например, au-team.irpo)
+        FULL_FQDN="${HOST_NAME}.${ZONE}."
+        
+        # Дописываем строку в файл обратной зоны с красивым выравниванием
+        printf "%-8s IN      PTR     %s\n" "$IP_OCTET" "$FULL_FQDN" >> "$ZONE2_FILE"
+        
+        echo "Запись добавлена: $IP_OCTET IN PTR $FULL_FQDN"
+        echo "---"
+    done
+
+    rndc-confgen > /var/lib/bind/etc/rndc.key
+    sed -i '6,$d' /var/lib/bind/etc/rndc.key
+    chown -R root:named /etc/bind/zone/*
+
+    systemctl enable --now bind.service
+    if systemctl status bind.service --no-pager | grep -q "active (running)"; then
+        echo -e "${GREEN}✓ DNS-сервер настроен${NC}"
+        read -p "Нажми Enter..."
+    else
+        echo -e "${RED}✗ DNS-сервер не настроен${NC}"
+        read -p "Нажми Enter..."
+    fi    
 }
 
 setup_timezone() {
@@ -428,6 +583,32 @@ setup_nat_forwarding() {
     read -p "Нажми Enter..."
 }
 
+setup_dhcp_server() {
+    clear
+    echo -e "${BLUE}=== Настройка DHCP сервера ===${NC}"
+    echo ""
+    
+    echo "На HQ-RTR:"
+    echo "conf t"
+    read -p "Введите номер VLAN и пул адресов (например, 100 192.168.100.100-192.168.100.200): " VLAN_NUMBER VLAN_POOL
+    echo "ip pool VLAN$VLAN_NUMBER $VLAN_POOL"
+    echo "dhcp-server 1"
+    echo "pool VLAN200 1"
+    echo "mask 24"
+    echo "gateway [IP адрес шлюза / HQ-RTR]"
+    echo "dns [IP адрес DNS-сервера / HQ-SRV]"
+    echo "domain-name [DNS-суффикс / домен]"
+    echo "exit и еще раз exit"
+    echo "interface [ИНТЕРФЕЙС ПОД $VLAN_NUMBER]"
+    echo "dhcp-server 1"
+    echo "exit"
+    echo "write memory"
+
+    echo -e "${GREEN}✓ DHCP сервер настроен${NC}"
+    echo "Не забудьте на клиенте включить DHCP (HQ-CLI)"
+    read -p "Нажми Enter..."
+}
+
 # ==================== МОДУЛЬ 2 ====================
 module2_menu() {
     while true; do
@@ -446,8 +627,9 @@ module2_menu() {
         echo "8) Настройка Docker + testapp"
         echo "9) Настройка LAMP веб-приложения"
         echo "10) Настройка Nginx reverse proxy"
-        echo "11) Настройка Яндекс Браузера"
-        echo "12) Вернуться в главное меню"
+        echo "11) Web-based аутентификация (ISP)"
+        echo "12) Настройка Яндекс Браузера"
+        echo "13) Вернуться в главное меню"
         echo ""
         read -p "Выберите пункт: " choice
         
@@ -462,8 +644,9 @@ module2_menu() {
             8) setup_docker ;;
             9) setup_lamp ;;
             10) setup_reverse_proxy ;;
-            11) setup_yandex_browser ;;
-            12) break ;;
+            11) setup_web_based ;;
+            12) setup_yandex_browser ;;
+            13) break ;;
             *) echo -e "${RED}Неверный выбор!${NC}"; sleep 2 ;;
         esac
     done
@@ -474,11 +657,12 @@ setup_samba_dc() {
     echo -e "${BLUE}=== Настройка Samba Domain Controller ===${NC}"
     echo ""
     
-    read -p "Введите домен (например, au-team.irpo): " DOMAIN
+    read -p "Введите домен (например, AU-TEAM): " DOMAIN
+    read -p "Введите также полное наименование домена в нижнем регистре (например, au-team.irpo): " DOMAIN_FULL
     read -p "Введите Realm (в верхнем регистре, например, AU-TEAM.IRPO): " REALM
     read -p "Введите пароль администратора домена: " ADMIN_PASS
     read -p "Введите DNS forwarder (например, 8.8.8.8): " FORWARDER
-    read -p "Введите интерфейс для DNS (например, ens19): " INTERFACE
+    read -p "Введите адаптер, смотрящий в сторону основной сети (например, ens19 или enp7s1): " EXT_IF
     
     apt-get update
     apt-get install -y task-samba-dc
@@ -487,28 +671,68 @@ setup_samba_dc() {
         systemctl disable $service --now 2>/dev/null
     done
     
-    rm -f /etc/samba/smb.conf
-    rm -rf /var/lib/samba
+    rm -f /etc/samba/smb.conf && rm -rf /var/lib/samba && rm -rf /var/cache/samba
     mkdir -p /var/lib/samba/sysvol
     
     # Неинтерактивная настройка
-    samba-tool domain provision --use-rfc2307 \
-        --domain="$DOMAIN" \
+    samba-tool domain provision \
+        --use-rfc2307 \
         --realm="$REALM" \
-        --adminpass="$ADMIN_PASS" \
-        --dns-forwarder="$FORWARDER" \
-        --server-role=dc
+        --domain="$DOMAIN" \
+        --server-role=dc \
+        --dns-backend=SAMBA_INTERNAL \
+        --option="dns forwarder = $FORWARDER" \
+        --adminpass="$ADMIN_PASS"
         
-    cat > /etc/net/ifaces/$INTERFACE/resolv.conf <<EOF
-search $DOMAIN
-nameserver 127.0.0.1
-EOF
-    systemctl restart network
-    
-    cp /var/lib/samba/private/krb5.conf /etc/krb5.conf
     systemctl enable --now samba
+
+    cp /etc/krb5.conf /var/lib/samba/private/krb5.conf
+    systemctl restart samba
+
+    echo "search $DOMAIN_FULL" > /etc/net/ifaces/$EXT_IF/resolv.conf
+    echo "nameserver 127.0.0.1" >> /etc/net/ifaces/$EXT_IF/resolv.conf
+    systemctl restart network
+
+    echo "Проверяем конфигурацию..."
+    if samba-tool domain info 127.0.0.1 | grep -q "Domain"; then
+        echo -e "${GREEN}✓ Конфигурация проверена${NC}"
+    fi
+
+    if host $DOMAIN_FULL | grep -q "has address"; then
+        echo -e "${GREEN}✓ DNS проверен${NC}"
+    fi
+
+    if host -t SRV _kerberos._udp.$DOMAIN_FULL. | grep -q "has SRV record"; then
+        echo -e "${GREEN}✓ DNS проверен${NC}"
+    fi
+
+    kinit administrator@$REALM
+
+    samba-tool group add hq
+    if samba-tool group list | grep -q "hq"; then
+        echo -e "${GREEN}✓ Группа hq создана${NC}"
+    fi
+
+    for i in {1..5}; do
+        samba-tool user add hquser$i P@ssw0rd;
+        samba-tool user setexpiry hquser$i --noexpiry;
+        samba-tool group addmembers "hq" hquser$i;
+    done
+
+    if samba-tool group list | grep -q "hq"; then
+        echo -e "${GREEN}✓ Пользователи hquser1-hquser5 созданы и добавлены в группу hq${NC}"
+    fi
     
     echo -e "${GREEN}✓ Samba DC настроен (домен: $DOMAIN)${NC}"
+
+    echo "На клиенте не забудьте установить пакет авторизации: apt-get update && apt-get install -y task-auth-ad-sssd"
+    echo "Также, можно поставить управляющий: apt-get install -y libnss-role"
+    echo "Необходимо добавить wheel к группе hq: roleadd hq wheel"
+
+    echo "Отредактируйте файл /etc/sudoers, взяв строчку:"
+    echo "Cmnd_Alias    SHELLCMD = /bin/cat, /bin/grep, /usr/bin/id"
+    echo "Также сделайте строчку: WHEEL_USERS ALL=(ALL:ALL) SHELLCMD"
+
     read -p "Нажми Enter..."
 }
 
@@ -535,8 +759,7 @@ setup_raid() {
     mdadm --zero-superblock --force /dev/$DISK1 /dev/$DISK2 2>/dev/null
     wipefs -a /dev/$DISK1 /dev/$DISK2 2>/dev/null
     mdadm --create --verbose /dev/$MD_DEV -l 0 -n 2 /dev/$DISK1 /dev/$DISK2
-    
-    mkdir -p /etc/mdadm
+
     mdadm --detail --scan --verbose | tee -a /etc/mdadm.conf
     
     mkfs.ext4 -F /dev/$MD_DEV
@@ -583,8 +806,8 @@ setup_nfs_client() {
     apt-get install -y nfs-utils nfs-clients
     mkdir -p "$MOUNT_POINT"
     
-    mount -t nfs "$SERVER_IP:$NFS_DIR" "$MOUNT_POINT"
     echo "$SERVER_IP:$NFS_DIR $MOUNT_POINT nfs defaults 0 0" >> /etc/fstab
+    mount -av
     
     echo -e "${GREEN}✓ NFS клиент настроен, смонтирован в $MOUNT_POINT${NC}"
     df -h | grep nfs
@@ -596,39 +819,17 @@ setup_ntp_server() {
     echo -e "${BLUE}=== Настройка NTP сервера (chrony) ===${NC}"
     echo ""
     
-    read -p "Введите внешние NTP серверы через пробел (например, ntp.mobik.ru): " EXT_NTP
-    read -p "Введите стратум сервера (например, 5): " STRATUM
-    echo -e "${YELLOW}Введите сети, которым разрешено использовать NTP (по одной):${NC}"
-    
     apt-get install -y chrony
     
     cat > /etc/chrony/chrony.conf <<EOF
-# Внешние NTP серверы
-EOF
-    for ntp in $EXT_NTP; do
-        echo "server $ntp iburst" >> /etc/chrony/chrony.conf
-    done
-    
-    echo "local stratum $STRATUM" >> /etc/chrony/chrony.conf
-    echo "allow all" >> /etc/chrony/chrony.conf
-    echo "deny all" >> /etc/chrony/chrony.conf
-    
-    while true; do
-        read -p "Введите сеть для разрешения (или Enter для завершения): " ALLOW_NET
-        [[ -z "$ALLOW_NET" ]] && break
-        sed -i "s/deny all/allow $ALLOW_NET\\ndeny all/" /etc/chrony/chrony.conf
-    done
-    
-    cat >> /etc/chrony/chrony.conf <<EOF
-driftfile /var/lib/chrony/drift
-makestep 1.0 3
-rtcsync
+server ntp1.vniiftri.ru iburst prefer minstratum 4
+local stratum 5
+allow 0.0.0.0/0
 EOF
     
     systemctl enable --now chronyd
-    systemctl restart chronyd
     
-    echo -e "${GREEN}✓ NTP сервер настроен (стратум $STRATUM)${NC}"
+    echo -e "${GREEN}✓ NTP сервер настроен (стратум 5)${NC}"
     chronyc tracking
     read -p "Нажми Enter..."
 }
@@ -644,16 +845,12 @@ setup_ntp_client() {
     
     cat > /etc/chrony/chrony.conf <<EOF
 server $NTP_SERVER iburst
-driftfile /var/lib/chrony/drift
-makestep 1.0 3
-rtcsync
 EOF
     
     systemctl enable --now chronyd
-    systemctl restart chronyd
     
     echo -e "${GREEN}✓ NTP клиент настроен на сервер $NTP_SERVER${NC}"
-    chronyc sources -v
+    chronyc sources
     read -p "Нажми Enter..."
 }
 
@@ -664,44 +861,99 @@ setup_ansible() {
     
     read -p "Введите пароль для подключения к хостам: " ANSIBLE_PASS
     
-    apt-get install -y ansible sshpass python3-module-pip
+    apt-get update && apt-get install -y ansible sshpass python3-module-pip
     pip3 install ansible-pylibssh
     
+    INVENTORY_FILE=/etc/ansible/hosts
+
+    echo "=== Настройка инвентаря Ansible ==="
+    read -p "IP для HQ-SRV [192.168.100.2]: " HQ_SRV_IP
+    HQ_SRV_IP=${HQ_SRV_IP:-192.168.100.2}
+
+    read -p "IP для HQ-RTR [10.10.10.1]: " HQ_RTR_IP
+    HQ_RTR_IP=${HQ_RTR_IP:-10.10.10.1}
+
+    read -p "IP для BR-RTR [192.168.0.1]: " BR_RTR_IP
+    BR_RTR_IP=${BR_RTR_IP:-192.168.0.1}
+
+    read -p "IP для HQ-CLI [192.168.200.2]: " HQ_CLI_IP
+    HQ_CLI_IP=${HQ_CLI_IP:-192.168.200.2}
+
+    # Запрашиваем общие пароли
+    read -p "Основной пароль (для Servers/Routers) [P@ssw0rd]: " MAIN_PASS
+    MAIN_PASS=${MAIN_PASS:-P@ssw0rd}
+
+    read -p "Порт SSH для серверов [2026]: " SRV_PORT
+    SRV_PORT=${SRV_PORT:-2026}
+
     mkdir -p /etc/ansible
-    cat > /etc/ansible/ansible.cfg <<EOF
-[defaults]
-host_key_checking = False
-timeout = 30
-forks = 10
-[ssh_connection]
-pipelining = True
+    cat << EOF > "$INVENTORY_FILE"
+    [Servers]
+    HQ-SRV ansible_host=${HQ_SRV_IP}
+
+    [Routers]
+    HQ-RTR ansible_host=${HQ_RTR_IP}
+    BR-RTR ansible_host=${BR_RTR_IP}
+
+    [Clients]
+    HQ-CLI ansible_host=${HQ_CLI_IP}
+
+    [Servers:vars]
+    ansible_user=sshuser
+    ansible_password=${MAIN_PASS}
+    ansible_port=${SRV_PORT}
+
+    [Routers:vars]
+    ansible_user=net_admin
+    ansible_password=${MAIN_PASS}
+    ansible_connection=network_cli
+    ansible_network_os=ios
+
+    [Clients:vars]
+    ansible_user=user
+    ansible_password=resu
+
+    [all:vars]
+    ansible_python_interpreter=/usr/bin/python3
 EOF
-    
-    cat > /etc/ansible/hosts <<EOF
-[all:vars]
-ansible_user=sshuser
-ansible_password=$ANSIBLE_PASS
 
-[alt_servers]
-# Добавьте ваши ALT Linux серверы в формате:
-# hostname ansible_host=IP_адрес
-
-[ecorouters]
-# Добавьте ваши EcoRouter в формате:
-# hostname ansible_host=IP_адрес ansible_user=net_admin
-
-[ecorouters:vars]
-ansible_connection=network_cli
-ansible_network_os=cisco.ios
-
-[alt_servers:vars]
-ansible_connection=ssh
-ansible_python_interpreter=/usr/bin/python3
-EOF
-    
-    echo -e "${GREEN}✓ Ansible настроен${NC}"
-    echo -e "${YELLOW}Отредактируйте /etc/ansible/hosts и добавьте ваши хосты${NC}"
+    echo "---"
+    echo "Файл инвентаря успешно сгенерирован: $INVENTORY_FILE"
     read -p "Нажми Enter..."
+
+    CONFIG_FILE="/etc/ansible/ansible.cfg"
+
+    # --- 1. Настройка параметра INVENTORY ---
+    if grep -q "^inventory" "$CONFIG_FILE"; then
+        # Строка есть и активна — жестко правим значение
+        sed -i "s|^inventory\s*=.*|inventory = /etc/ansible/hosts|" "$CONFIG_FILE"
+    elif grep -q "^#\s*inventory" "$CONFIG_FILE"; then
+        # Строка есть, но закомментирована — раскомментируем и правим
+        sed -i "s|^#\s*inventory\s*=.*|inventory = /etc/ansible/hosts|" "$CONFIG_FILE"
+    else
+        # Строки вообще нет — вставляем строго под [defaults]
+        sed -i "/^\[defaults\]/a inventory = /etc/ansible/hosts" "$CONFIG_FILE"
+    fi
+
+    # --- 2. Настройка параметра HOST_KEY_CHECKING ---
+    if grep -q "^host_key_checking" "$CONFIG_FILE"; then
+        # Строка есть и активна — жестко правим значение
+        sed -i "s|^host_key_checking\s*=.*|host_key_checking = False|" "$CONFIG_FILE"
+    elif grep -q "^#\s*host_key_checking" "$CONFIG_FILE"; then
+        # Строка есть, но закомментирована — раскомментируем и правим
+        sed -i "s|^#\s*host_key_checking\s*=.*|host_key_checking = False|" "$CONFIG_FILE"
+    else
+        # Строки вообще нет — вставляем строго под [defaults]
+        sed -i "/^\[defaults\]/a host_key_checking = False" "$CONFIG_FILE"
+    fi    
+
+    echo "Конфигурация Ansible настроена"
+
+    ansible-galaxy collection install ansible.netcommon
+    ansible-galaxy collection install cisco.ios
+
+    echo "Пакеты для управления Ecosystem установлены"
+    echo "Не забудьте на HQ-RTR и BR-RTR зайти в conf t и ввести security none"
 }
 
 setup_docker() {
@@ -709,66 +961,58 @@ setup_docker() {
     echo -e "${BLUE}=== Настройка Docker + testapp ===${NC}"
     echo ""
     
-    read -p "Введите путь к директории с образами (site_latest.tar, mariadb_latest.tar): " IMAGES_PATH
-    read -p "Введите порт для приложения (например, 8080): " APP_PORT
-    read -p "Введите пароль для базы данных: " DB_PASS
-    read -p "Введите имя базы данных: " DB_NAME
-    read -p "Введите пользователя БД: " DB_USER
-    
     apt-get install -y docker-engine docker-compose-v2
-    systemctl enable --now docker
-    
-    docker load < "$IMAGES_PATH/site_latest.tar"
-    docker load < "$IMAGES_PATH/mariadb_latest.tar"
-    
-    mkdir -p /opt/testapp
-    cd /opt/testapp
-    
-    cat > docker-compose.yaml <<EOF
-version: '3.8'
+    systemctl enable --now docker.service
 
+    mount /dev/sr0 /mnt/ 2>/dev/null
+    
+    docker load < /mnt/docker/site_latest.tar
+    docker load < /mnt/docker/mariadb_latest.tar
+
+    if docker image ls | grep "mariadb"; then
+        echo -e "${GREEN}✓ Образ MariaDB загружен${NC}"
+    fi
+
+    if docker image ls | grep "site"; then
+        echo -e "${GREEN}✓ Образ testapp загружен${NC}"
+    fi
+    
+    read -p "Введите IP-адрес хоста, где находится база данных (local-touch): " DB_HOST
+
+    cat > docker-compose.yaml <<EOF
 services:
   db:
-    image: mariadb_latest:latest
+    image: mariadb:10.11
     container_name: db
     restart: always
     environment:
-      MYSQL_ROOT_PASSWORD: $DB_PASS
-      MYSQL_DATABASE: $DB_NAME
-      MYSQL_USER: $DB_USER
-      MYSQL_PASSWORD: $DB_PASS
-    volumes:
-      - db_data:/var/lib/mysql
-    networks:
-      - testapp_network
+      MARIADB_ROOT_PASSWORD: "toor"
+      MARIADB_DATABASE: "testdb"
+      MARIADB_USER: "testc"
+      MARIADB_PASSWORD: "P@ssw0rd"
+    ports:
+      - "3306:3306"
 
   testapp:
-    image: site_latest:latest
+    image: site:latest
     container_name: testapp
     restart: always
     ports:
-      - "$APP_PORT:80"
+      - "8080:8000"
     environment:
-      DB_HOST: db
-      DB_NAME: $DB_NAME
-      DB_USER: $DB_USER
-      DB_PASSWORD: $DB_PASS
+      DB_HOST: "$DB_HOST"
+      DB_PORT: "3306"
+      DB_TYPE: "maria"
+      DB_NAME: "testdb"
+      DB_USER: "testc"
+      DB_PASS: "P@ssw0rd"
     depends_on:
       - db
-    networks:
-      - testapp_network
-
-volumes:
-  db_data:
-
-networks:
-  testapp_network:
-    driver: bridge
 EOF
     
     docker compose up -d
     
-    echo -e "${GREEN}✓ Docker контейнеры запущены на порту $APP_PORT${NC}"
+    echo -e "${GREEN}✓ Docker контейнеры запущены на порту 8080${NC}"
     docker ps
     read -p "Нажми Enter..."
 }
@@ -778,33 +1022,74 @@ setup_lamp() {
     echo -e "${BLUE}=== Настройка LAMP веб-приложения ===${NC}"
     echo ""
     
-    read -p "Введите путь к директории с файлами приложения (index.php, dump.sql): " WEB_PATH
-    read -p "Введите имя базы данных: " DB_NAME
-    read -p "Введите пользователя БД: " DB_USER
-    read -p "Введите пароль БД: " DB_PASS
-    
     apt-get install -y lamp-server
+
+    mount /dev/sr0 /mnt/ 2>/dev/null
+
+    cp /mnt/web/index.php /var/www/html
+    cp /mnt/web/logo.png /var/www/html
+
+    echo "=== Настройка подключения к БД (PHP) ==="
+
+    # 1. Запрашиваем данные у пользователя
+    read -p "Имя пользователя БД [webc]: " DB_USER
+    DB_USER=${DB_USER:-webc}
+
+    read -p "Пароль БД [P@ssw0rd]: " DB_PASS
+    DB_PASS=${DB_PASS:-P@ssw0rd}
+
+    read -p "Имя базы данных [webdb]: " DB_NAME
+    DB_NAME=${DB_NAME:-webdb}
+    
+    PHP_FILE="/var/www/html/index.php"
+
+    update_php_var() {
+        local var_name=$1
+        local var_value=$2
+        local file=$3
+
+        # Проверяем, есть ли переменная в файле (активная или закомментированная)
+        if grep -q "^\s*\\$var_name\s*=" "$file"; then
+            # Строка есть — жестко правим значение
+            sed -i "s|^\s*\\$var_name\s*=.*|\$$var_name = \"$var_value\";|" "$file"
+        elif grep -q "^\s*#\s*\\$var_name\s*=" "$file" || grep -q "^\s*//\s*\\$var_name\s*=" "$file"; then
+            # Строка закомментирована (# или //) — раскомментируем и правим значение
+            sed -i "s|^.*\\$var_name\s*=.*|\$$var_name = \"$var_value\";|" "$file"
+        else
+            # Строки вообще нет — дописываем её сразу после тега <?php
+            sed -i "/<?php/a \$$var_name = \"$var_value\";" "$file"
+        fi
+    }    
+
+    update_php_var "username" "$DB_USER" "$PHP_FILE"
+    update_php_var "password" "$DB_PASS" "$PHP_FILE"
+    update_php_var "dbname"   "$DB_NAME" "$PHP_FILE"
+
     systemctl enable --now mariadb
-    systemctl enable --now httpd2
-    
-    cp "$WEB_PATH/index.php" /var/www/html/
-    cp "$WEB_PATH/logo.png" /var/www/html/ 2>/dev/null
-    
+
+    # 1. Засылаем пачку команд под рутом
     mariadb -u root <<EOF
-CREATE DATABASE IF NOT EXISTS $DB_NAME;
-DROP USER IF EXISTS '$DB_USER'@'localhost';
-CREATE USER '$DB_USER'@'localhost' IDENTIFIED BY '$DB_PASS';
-GRANT ALL PRIVILEGES ON $DB_NAME.* TO '$DB_USER'@'localhost' WITH GRANT OPTION;
-FLUSH PRIVILEGES;
+    CREATE DATABASE webdb;
+    CREATE USER 'webc'@'localhost' IDENTIFIED BY 'P@ssw0rd';
+    GRANT ALL PRIVILEGES ON webdb.* TO 'webc'@'localhost' WITH GRANT OPTION;
 EOF
-    
-    mariadb -u "$DB_USER" -p"$DB_PASS" -D "$DB_NAME" < "$WEB_PATH/dump.sql" 2>/dev/null
-    
-    sed -i "s/'dbname' => '[^']*'/'dbname' => '$DB_NAME'/g" /var/www/html/index.php
-    sed -i "s/'user' => '[^']*'/'user' => '$DB_USER'/g" /var/www/html/index.php
-    sed -i "s/'password' => '[^']*'/'password' => '$DB_PASS'/g" /var/www/html/index.php
+
+    # 2. Заливаем дамп
+    mariadb -u webc -p'P@ssw0rd' -D webdb < /mnt/web/dump.sql    
     
     echo -e "${GREEN}✓ LAMP веб-приложение настроено${NC}"
+
+    echo "ТАКЖЕ! Нужно настроить на HQ-RTR и BR-RTR трансляцию портов:"
+    echo "ip nat source static tcp <IP-АДРЕС_УСТРОЙСТВА_ЛОКАЛЬНОЙ_СЕТИ> <ПОРТ_УСТРОЙСТВА_ЛОКАЛЬНОЙ_СЕТИ> <ВНЕШНИЙ_IP-АДРЕС_УСТРОЙСТВА> <ПОРТ_ДЛЯ_ОБРАЩЕНИЯ_ИЗ_ВНЕШНЕЙ_СЕТИ>"
+    echo "Прокидывается IP-адрес HQ-SRV с портом 80 на порт 8080 у HQ-RTR:"
+    echo "ip nat source static tcp [IP-АДРЕС_HQ-SRV] 80 [IP-АДРЕС_HQ-RTR-GLOBAL (ISP)] 8080"
+    echo "Прокидывается IP-адрес HQ-SRV с портом 2026 на порт 2026 у HQ-RTR:"
+    echo "ip nat source static tcp [IP-АДРЕС_HQ-SRV] 2026 [IP-АДРЕС_HQ-RTR-GLOBAL (ISP)] 2026"
+    echo "Прокидывается IP-адрес BR-SRV с портом 8080 на порт 8080 у BR-RTR:"
+    echo "ip nat source static tcp [IP-АДРЕС_BR-SRV] 8080 [IP-АДРЕС_BR-RTR-GLOBAL (ISP)] 8080"
+    echo "Прокидывается IP-адрес BR-SRV с портом 2026 на порт 2026 у BR-RTR:"
+    echo "ip nat source static tcp [IP-АДРЕС_BR-SRV] 2026 [IP-АДРЕС_BR-RTR-GLOBAL (ISP)] 2026"
+
     read -p "Нажми Enter..."
 }
 
@@ -816,13 +1101,9 @@ setup_reverse_proxy() {
     echo -e "${YELLOW}Введите настройки для проксируемых доменов (по одному):${NC}"
     
     apt-get install -y nginx
-    
-    cat > /etc/nginx/sites-available.d/default.conf <<'EOF'
-# Конфигурация будет добавлена
-EOF
-    
+
     while true; do
-        read -p "Введите доменное имя (или Enter для завершения): " DOMAIN_NAME
+        read -p "Введите доменное имя (пример, web.au-team.irpo) (или Enter для завершения): " DOMAIN_NAME
         [[ -z "$DOMAIN_NAME" ]] && break
         read -p "Введите IP-адрес бекенда: " BACKEND_IP
         read -p "Введите порт бекенда: " BACKEND_PORT
@@ -831,9 +1112,13 @@ EOF
 server {
     listen 80;
     server_name $DOMAIN_NAME;
+
     location / {
         proxy_pass http://$BACKEND_IP:$BACKEND_PORT;
         proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
     }
 }
 
@@ -841,9 +1126,35 @@ EOF
     done
     
     ln -sf /etc/nginx/sites-available.d/default.conf /etc/nginx/sites-enabled.d/
-    nginx -t && systemctl restart nginx
+    nginx -t && systemctl enable --now nginx
     
     echo -e "${GREEN}✓ Nginx reverse proxy настроен${NC}"
+    read -p "Нажми Enter..."
+}
+
+setup_web_based () {
+    clear
+    echo -e "${BLUE}=== ISP. Настройка Web-Based аутентификация ===${NC}"
+    echo ""
+
+    apt-get install -y apache2-htpasswd
+
+    htpasswd -bc /etc/nginx/.htpasswd WEB P@ssw0rd
+
+    echo -e "${GREEN}✓ Web-Based аутентификация настроена${NC}"
+    echo "Необходимо добавить в файл /etc/nginx/sites-available.d/default.conf:"
+    echo "auth_basic "Restricted Access";"
+    echo "auth_basic_user_file /etc/nginx/.htpasswd;"
+    echo "Добавляйте там, где необходимо! См. задание 2.10"
+
+    if nginx -t >/dev/null; then
+        echo -e "${GREEN}✓ Nginx настроен${NC}"
+    else
+        echo -e "${RED}✗ Ошибка настройки Nginx${NC}"
+    fi
+
+    systemctl restart nginx
+    
     read -p "Нажми Enter..."
 }
 
@@ -878,7 +1189,8 @@ module3_menu() {
         echo "4) Установка корневого сертификата"
         echo "5) Настройка CUPS принт-сервера"
         echo "6) Настройка CUPS клиента"
-        echo "7) Вернуться в главное меню"
+        echo "7) Настройка IP-туннеля до уровня шифрования"
+        echo "8) Вернуться в главное меню"
         echo ""
         read -p "Выберите пункт: " choice
         
@@ -889,7 +1201,8 @@ module3_menu() {
             4) install_root_certificate ;;
             5) setup_cups_server_v3 ;;
             6) setup_cups_client_v3 ;;
-            7) break ;;
+            7) setup_ipsec_vpn ;;
+            8) break ;;
             *) echo -e "${RED}Неверный выбор!${NC}"; sleep 2 ;;
         esac
     done
@@ -900,46 +1213,50 @@ import_users_csv() {
     echo -e "${BLUE}=== Импорт пользователей из CSV в домен ===${NC}"
     echo ""
     
-    read -p "Введите путь к CSV файлу (например, /mnt/users.csv): " CSV_FILE
+    mount /dev/sr0 /mnt/ 2>/dev/null
+
+    read -p "Введите путь к CSV файлу (например, /mnt/Users.csv): " CSV_FILE
     read -p "Введите пароль администратора домена: " ADMIN_PASS
     read -p "Введите Realm (например, AU-TEAM.IRPO): " REALM
     
-    echo "$ADMIN_PASS" | kinit administrator@$REALM 2>/dev/null
+    if [ ! -f "$CSV_FILE" ]; then
+        echo "Ошибка: Файл $CSV_FILE не найден!"
+        exit 1
+    fi
     
-    # Создание OU
-    echo -e "${YELLOW}Введите названия OU для создания (через пробел):${NC}"
-    read -p "OU: " OUS
-    
-    for ou in $OUS; do
-        samba-tool ou create "OU=$ou" 2>/dev/null
-        echo -e "${GREEN}✓ OU $ou создан${NC}"
+    echo -e "${BLUE}[1/3] Создание уникальных OU..${NC}"
+
+    OU_LIST=$(awk -F ';' 'NR>1 {print $5}' "$CSV_FILE" | sort | uniq)
+    echo "$OU_LIST" | while read -r ou; do
+        if [ -z "$ou" ]; then continue; fi
+        samba-tool ou add "OU=$ou,DC=au-team,DC=irpo"
     done
-    
-    # Импорт
-    tail -n +2 "$CSV_FILE" | while IFS=',' read -r login sname fname phone email org position manager ou; do
-        login=$(echo "$login" | sed 's/"//g' | xargs | tr '[:upper:]' '[:lower:]')
-        fname=$(echo "$fname" | sed 's/"//g' | xargs)
-        sname=$(echo "$sname" | sed 's/"//g' | xargs)
-        ou=$(echo "$ou" | sed 's/"//g' | xargs)
-        
-        if [[ -n "$ou" && "$ou" != "-" ]]; then
-            samba-tool user create "$login" "P@ssw0rd" \
-                --given-name="$fname" \
-                --surname="$sname" \
-                --userou="OU=$ou" 2>/dev/null
-        else
-            samba-tool user create "$login" "P@ssw0rd" \
-                --given-name="$fname" \
-                --surname="$sname" 2>/dev/null
+
+    echo -e "${BLUE}[2/3] Создание и импорт пользователей..${NC}"
+    while IFS=";" read -r firstName lastName role phone ou street zip city country password; do
+        if [ "$firstName" = "First Name" ] || [ -z "$firstName" ]; then
+            continue
         fi
+        username="${firstName,,}.${lastName,,}"
+        echo "Добавляем пользователя: $username (OU: $ou)"
+        samba-tool user add "$username" P@ssw0rd1 \
+            --given-name="$firstName" \
+            --surname="$lastName" \
+            --telephone-number="$phone" \
+            --job-title="$role" \
+            --userou="OU=$ou"
         
-        if [[ $? -eq 0 ]]; then
-            samba-tool user setexpiry "$login" --noexpiry 2>/dev/null
-            samba-tool user enable "$login" 2>/dev/null
-            echo -e "${GREEN}✓ $login импортирован${NC}"
-        fi
-    done
+        samba-tool user setexpiry "$username" --noexpiry
     
+    done < "$CSV_FILE"
+
+    echo -e "${BLUE}[3/3] Проверка проведенного процесса..${NC}"
+    if samba-tool ou list | grep "Cloud storage" &>/dev/null; then
+        echo -e "${GREEN}✓ OU импортированы${NC}"
+    else
+        echo -e "${RED}✗ Ошибка импорта OU${NC}"
+    fi
+
     echo -e "${GREEN}✓ Импорт завершен${NC}"
     read -p "Нажми Enter..."
 }
@@ -949,39 +1266,43 @@ setup_ca_gost() {
     echo -e "${BLUE}=== Настройка центра сертификации (ГОСТ) ===${NC}"
     echo ""
     
-    read -p "Введите количество дней действия сертификатов: " CA_DAYS
     read -p "Введите IP адрес ISP для копирования сертификатов: " ISP_IP
     read -p "Введите IP адрес HQ-CLI для копирования сертификатов: " CLI_IP
+    read -p "Введите хостнеймы сервисов через пробел каждый (например, web.au-team.irpo docker.au-team.irpo): " HOSTNAMES
     
     apt-get install -y openssl-gost-engine
     control openssl-gost enabled 2>/dev/null
     
     mkdir -p /etc/ssl/certs /etc/ssl/private
     cd /etc/ssl/certs
-    
-    # Корневой сертификат
+
+    echo "Создание закрытого ключа ГОСТ-2012"    
     openssl genpkey -algorithm gost2012_256 -pkeyopt paramset:TCB -out ca.key
-    chmod 600 ca.key
-    openssl req -new -x509 -md_gost12_256 -days "$CA_DAYS" -key ca.key -out ca.cer \
-        -subj "/C=RU/ST=Moscow/L=Moscow/O=au-team/CN=au-team Root CA"
+    echo "Создание корневого сертификата сертификата на 30 дней"
+    echo "При запросе CN: RU, OrgName = au-team.irpo, Common Name - хостнейм сервера полностью"
+    openssl req -new -x509 -md_gost12_256 -days 30 -key ca.key -out ca.cer
     
-    # Сертификаты для доменов
-    for domain in web.au-team.irpo docker.au-team.irpo; do
-        openssl genpkey -algorithm gost2012_256 -pkeyopt paramset:A -out ${domain}.key
-        chmod 600 ${domain}.key
-        openssl req -new -md_gost12_256 -key ${domain}.key -out ${domain}.csr \
-            -subj "/C=RU/ST=Moscow/L=Moscow/O=au-team/CN=$domain"
-        openssl x509 -req -in ${domain}.csr -CA ca.cer -CAkey ca.key -CAcreateserial \
-            -out ${domain}.cer -days "$CA_DAYS" -md_gost12_256
-        
-        # Копирование на ISP
-        scp -o StrictHostKeyChecking=no ${domain}.key ${domain}.cer root@$ISP_IP:/root/ 2>/dev/null
+    for hostname_domain in $HOSTNAMES; do
+        echo "Генерация ключа и сертификата для $hostname_domain"
+        openssl genpkey -algorithm gost2012_256 -pkeyopt paramset:A -out ${hostname_domain}.key
+        echo "CN - ЭТО ХОСТНЕЙМ СЕРВИСА ПОЛНОСТЬЮ С ДОМЕНОМ, ПРИМЕР: web.au-team.irpo)"
+        openssl req -new -md_gost12_256 -key ${hostname_domain}.key -out ${hostname_domain}.csr
+
+        openssl x509 -req -in ${hostname_domain}.csr -CA ca.cer -CAkey ca.key -CAcreateserial \
+            -out ${hostname_domain}.cer -days 30
+    done
+
+    echo "Внимание! Не забудьте включить доступ по ssh для пользователя root на ISP:"
+    echo "vim /etc/openssh/sshd_config и PermitRootLogin yes, затем перезапустить systemctl restart sshd"
+
+    read -p "Как только все сделали, нажмите Enter, чтобы продолжить..."
+
+    for hostname_domain in $HOSTNAMES; do
+        scp ${hostname_domain}.key root@${ISP_IP}:/root/
+        scp ${hostname_domain}.cer root@${ISP_IP}:/root/
     done
     
-    # Копирование корневого сертификата на HQ-CLI
-    scp -o StrictHostKeyChecking=no ca.cer root@$CLI_IP:/root/ 2>/dev/null
-    
-    echo -e "${GREEN}✓ Центр сертификации настроен (сертификаты на $CA_DAYS дней)${NC}"
+    echo -e "${GREEN}✓ Центр сертификации настроен (сертификаты на 30 дней)${NC}"
     read -p "Нажми Enter..."
 }
 
@@ -990,42 +1311,57 @@ setup_nginx_https_gost() {
     echo -e "${BLUE}=== Настройка Nginx HTTPS с ГОСТ ===${NC}"
     echo ""
     
-    read -p "Введите IP адрес бекенда для web.au-team.irpo: " WEB_BACKEND
-    read -p "Введите IP адрес бекенда для docker.au-team.irpo: " DOCKER_BACKEND
+    read -p "Введите первый сервис (например, web.au-team.irpo): " WEB_BACKEND
+    read -p "Введите второй сервис (например, docker.au-team.irpo): " DOCKER_BACKEND
+    read -p "Введите IP-адрес для первого сервиса (например, 172.16.1.2): " WEB_BACKEND_IP
+    read -p "Введите IP-адрес для второго сервиса (например, 172.16.2.2): " DOCKER_BACKEND_IP
     
     apt-get install -y openssl-gost-engine
     control openssl-gost enabled 2>/dev/null
-    
-    mkdir -p /etc/nginx/ssl
-    for domain in web.au-team.irpo docker.au-team.irpo; do
+
+    mkdir /etc/nginx/ssl
+    for domain in $WEB_BACKEND $DOCKER_BACKEND; do
         if [[ -f /root/${domain}.key ]]; then
-            cp /root/${domain}.key /etc/nginx/ssl/
-            cp /root/${domain}.cer /etc/nginx/ssl/
+            cp ${domain}.key /etc/nginx/ssl/
+            cp ${domain}.cer /etc/nginx/ssl/
         fi
     done
     
     cat > /etc/nginx/sites-available.d/default.conf <<EOF
-server { listen 80; server_name web.au-team.irpo; return 301 https://\$host\$request_uri; }
-server { listen 80; server_name docker.au-team.irpo; return 301 https://\$host\$request_uri; }
-
 server {
     listen 443 ssl;
-    server_name web.au-team.irpo;
-    ssl_certificate /etc/nginx/ssl/web.au-team.irpo.cer;
-    ssl_certificate_key /etc/nginx/ssl/web.au-team.irpo.key;
-    ssl_protocols TLSv1.2 TLSv1.3;
-    ssl_ciphers GOST2012-GOST8912-GOST8912;
-    location / { proxy_pass http://$WEB_BACKEND:80; proxy_set_header Host \$host; }
+    server_name $WEB_BACKEND;
+    ssl_certificate /etc/nginx/ssl/$WEB_BACKEND.cer;
+    ssl_certificate_key /etc/nginx/ssl/$WEB_BACKEND.key;
+    ssl_ciphers GOST2012-GOST8912-GOST8912:HIGH:MEDIUM;
+    ssl_protocols TLSv1 TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers on;
+    location / { 
+        proxy_pass http://$WEB_BACKEND_IP:80; 
+        proxy_set_header Host \$host; 
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        auth_basic "Restricted Access";
+        auth_basic_user_file /etc/nginx/.htpasswd;
+    }
 }
 
 server {
     listen 443 ssl;
-    server_name docker.au-team.irpo;
-    ssl_certificate /etc/nginx/ssl/docker.au-team.irpo.cer;
-    ssl_certificate_key /etc/nginx/ssl/docker.au-team.irpo.key;
-    ssl_protocols TLSv1.2 TLSv1.3;
-    ssl_ciphers GOST2012-GOST8912-GOST8912;
-    location / { proxy_pass http://$DOCKER_BACKEND:8080; proxy_set_header Host \$host; }
+    server_name $DOCKER_BACKEND;
+    ssl_certificate /etc/nginx/ssl/$DOCKER_BACKEND.cer;
+    ssl_certificate_key /etc/nginx/ssl/$DOCKER_BACKEND.key;
+    ssl_ciphers GOST2012-GOST8912-GOST8912:HIGH:MEDIUM;
+    ssl_protocols TLSv1 TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers on;
+    location / { 
+        proxy_pass http://$DOCKER_BACKEND_IP:8080; 
+        proxy_set_header Host \$host; 
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
 }
 EOF
     
@@ -1048,6 +1384,13 @@ install_root_certificate() {
     else
         echo -e "${RED}Файл не найден!${NC}"
     fi
+
+    echo "ЕСЛИ ПРОТОКОЛ НЕ ПОДДЕРЖИВАЕТСЯ, КОГДА ВЫ ЗАШЛИ НА КЛИЕНТЕ:"
+    echo "Заходим на сайт cryptopro.ru на HQ-CLI"
+    echo "Выбираем Продукты -> КриптоПро SCP -> Скачать КриптоПро SCP"
+    echo "Заполняем данные, выбираем скачать для Linux RPM"
+    echo "Запускаем, в наборе для установки пометить <Импортировать корневые сертификаты из ОС>"
+
     read -p "Нажми Enter..."
 }
 
@@ -1106,6 +1449,93 @@ setup_cups_client_v3() {
     
     echo -e "${GREEN}✓ Принтер $LOCAL_PRINTER подключен и установлен по умолчанию${NC}"
     lpstat -p -d
+    read -p "Нажми Enter..."
+}
+
+setup_ipsec_vpn() {
+    clear
+    echo -e "${BLUE}=== Настройка IKE VPN ===${NC}"
+    echo ""
+
+    echo "На HQ-RTR делаем:"
+    echo "conf t"
+    echo "hq-rtr(config)#crypto-ipsec ike enable"
+    echo "hq-rtr(config)#crypto-ipsec profile CIPROFILE ike-v2"
+    echo "hq-rtr(config-ipsec-ikev2)#mode tunnel"
+    echo "hq-rtr(config-ipsec-ikev2)#ike-phase1"
+    echo "hq-rtr(config-ipsec-ikev2-ph1)#proposal aes256-sha256-modp2048"
+    echo "hq-rtr(config-ipsec-ikev2-ph1)#auth pre-shared-key P@ssw0rd"
+    echo "hq-rtr(config-ipsec-ikev2-ph1)#exit"
+    echo "hq-rtr(config-ipsec-ikev2)#ike-phase2"
+    echo "hq-rtr(config-ipsec-ikev2-ph2)#protocol esp"
+    echo "hq-rtr(config-ipsec-ikev2-ph2)#proposal aes256-sha256"
+    echo "hq-rtr(config-ipsec-ikev2-ph2)#local-ts [IP-адрес HQ-RTR]"
+    echo "hq-rtr(config-ipsec-ikev2-ph2)#remote-ts [IP-адрес BR-RTR]"
+    echo "hq-rtr(config-ipsec-ikev2-ph2)#exit"
+    echo "hq-rtr(config-ipsec-ikev2)#exit"
+    echo "hq-rtr(config)#crypto-map CMAP 10"
+    echo "hq-rtr(config-crypto-map)#match peer [IP-адрес BR-RTR]"
+    echo "hq-rtr(config-crypto-map)#set crypto-ipsec profile CIPROFILE"
+    echo "hq-rtr(config)#filter-map ipv4 FMAP 5"
+    echo "hq-rtr(config-filter-map-ipv4)#match gre host [IP-адрес HQ-RTR] host [IP-адрес BR-RTR]"
+    echo "hq-rtr(config-filter-map-ipv4)#set crypto-map CMAP peer [IP-адрес BR-RTR]"
+    echo "hq-rtr(config-filter-map-ipv4)#exit"
+    echo "hq-rtr(config)#filter-map ipv4 FMAP 10"
+    echo "hq-rtr(config-filter-map-ipv4)#match udp host [IP-адрес BR-RTR] eq 4500 host [IP-адрес HQ-RTR] eq 4500"
+    echo "hq-rtr(config-filter-map-ipv4)#set crypto-map CMAP peer [IP-адрес BR-RTR]"
+    echo "hq-rtr(config-filter-map-ipv4)#exit"
+    echo "hq-rtr(config)#filter-map ipv4 FMAP 15"
+    echo "hq-rtr(config-filter-map-ipv4)#match any any any"
+    echo "hq-rtr(config-filter-map-ipv4)#set accept"
+    echo "hq-rtr(config-filter-map-ipv4)#exit"
+    echo "hq-rtr(config)#interface isp"
+    echo "hq-rtr(config-if)#set filter-map in FMAP 10"
+    echo "hq-rtr(config-if)#exit"
+    echo "hq-rtr(config)#interface tunnel.0"
+    echo "hq-rtr(config-if-tunnel)#set filter-map in FMAP 10"
+    echo "hq-rtr(config-if-tunnel)#exit"
+    echo "hq-rtr(config)#write memory"
+    
+    echo "На BR-RTR:"
+    echo "br-rtr(config)#crypto-ipsec ike enable"
+    echo "br-rtr(config)#crypto-ipsec profile CIPROFILE ike-v2"
+    echo "br-rtr(config-ipsec-ikev2)#mode tunnel"
+    echo "br-rtr(config-ipsec-ikev2)#ike-phase1"
+    echo "br-rtr(config-ipsec-ikev2-ph1)#proposal aes256-sha256-modp2048"
+    echo "br-rtr(config-ipsec-ikev2-ph1)#auth pre-shared-key P@ssw0rd"
+    echo "br-rtr(config-ipsec-ikev2-ph1)#exit"
+    echo "br-rtr(config-ipsec-ikev2)#"
+    echo "br-rtr(config-ipsec-ikev2)#ike-phase2"
+    echo "br-rtr(config-ipsec-ikev2-ph2)#protocol esp"
+    echo "br-rtr(config-ipsec-ikev2-ph2)#proposal aes256-sha256"
+    echo "br-rtr(config-ipsec-ikev2-ph2)#local-ts [IP-адрес BR-RTR]"
+    echo "br-rtr(config-ipsec-ikev2-ph2)#remote-ts [IP-адрес HQ-RTR]"
+    echo "br-rtr(config-ipsec-ikev2-ph2)#exit"
+    echo "br-rtr(config-ipsec-ikev2)#exit"
+    echo "br-rtr(config)#crypto-map CMAP 10"
+    echo "br-rtr(config-crypto-map)#match peer [IP-адрес HQ-RTR]"
+    echo "br-rtr(config-crypto-map)#set crypto-ipsec profile CIPROFILE"
+    echo "br-rtr(config-crypto-map)#exit"
+    echo "br-rtr(config)#filter-map ipv4 FMAP 5"
+    echo "br-rtr(config-filter-map-ipv4)#match gre host [IP-адрес BR-RTR] host [IP-адрес HQ-RTR]"
+    echo "br-rtr(config-filter-map-ipv4)#set crypto-map CMAP peer [IP-адрес HQ-RTR]"
+    echo "br-rtr(config-filter-map-ipv4)#exit"
+    echo "br-rtr(config)#filter-map ipv4 FMAP 10"
+    echo "br-rtr(config-filter-map-ipv4)#match udp host [IP-адрес HQ-RTR] eq 4500 host [IP-адрес BR-RTR] eq 4500"
+    echo "br-rtr(config-filter-map-ipv4)#set crypto-map CMAP peer [IP-адрес HQ-RTR]"
+    echo "br-rtr(config-filter-map-ipv4)#exit"
+    echo "br-rtr(config)#filter-map ipv4 FMAP 15"
+    echo "br-rtr(config-filter-map-ipv4)#match any any any"
+    echo "br-rtr(config-filter-map-ipv4)#set accept"
+    echo "br-rtr(config-filter-map-ipv4)#exit"
+    echo "br-rtr(config)#interface isp"
+    echo "br-rtr(config-if)#set filter-map in FMAP 10"
+    echo "br-rtr(config-if)#exit"
+    echo "br-rtr(config)#interface tunnel.0"
+    echo "br-rtr(config-if-tunnel)#set filter-map in FMAP 10"
+    echo "br-rtr(config-if-tunnel)#exit"
+    echo "br-rtr(config)#write memory"    
+
     read -p "Нажми Enter..."
 }
 

@@ -118,7 +118,7 @@ setup_full_isp() {
 
     ip -c --br a
     
-    echo -e -n "${CYAN}Укажите необходимые интерфесы для конфигурирования через пробел. (например, ens19 ens20):${CN}" 
+    echo -e -n "${CYAN}Укажите необходимые интерфесы для конфигурирования через пробел. (например, ens19 ens20):${NC}" 
     read INTERFACES
 
 
@@ -183,8 +183,7 @@ EOF
     systemctl enable --now iptables 2>/dev/null
     
     echo -e "${GREEN}✓ Первоначальные настройки ISP выполнены, можно приступать к дальнейшему выполнению!${NC}"
-    read -p "Нажми Enter..."
-    
+    read -p "Нажми Enter..." 
 } 
 
 setup_hostname_ip() {
@@ -431,16 +430,16 @@ EOF
     cp /var/lib/bind/etc/zone/empty /var/lib/bind/etc/zone/$ZONE2_IP.in-addr.arpa
 
     ZONE_FILE="/var/lib/bind/etc/zone/$ZONE"
-    SERIAL=$(date +%Y%m%d00)
-
-    echo -e "${BLUE}Настраиваем SOA и NS записи...${NC}"
-    sed -i "s/localhost\./${ZONE}./g" "$ZONE_FILE"
-    sed -i "s/root\.${ZONE}\./root.${ZONE}./g" "$ZONE_FILE" # На всякий случай корректируем root
-    sed -i "s/2025110500/${SERIAL}/" "$ZONE_FILE"
-
-    echo -e "${BLUE}Добавляем базовые записи для самой зоны...${NC}"
-    cat << EOF >> "$ZONE_FILE"
-            IN      A       $DNS_IP
+    cat > "$ZONE_FILE" << EOF
+    \$TTL 86400
+    @   IN  SOA ${HOSTNAME}. root.${DOMAIN}. (
+            $(date +%Y%m%d00) ; serial
+            3600       ; refresh
+            900        ; retry
+            604800     ; expire
+            86400 )    ; minimum
+    @   IN  NS  ${HOSTNAME}.
+    @   IN  A   $DNS_IP
 EOF
 
     echo "--------------------------------------------------------"

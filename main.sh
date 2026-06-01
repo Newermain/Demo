@@ -60,38 +60,132 @@ module1_menu() {
         echo -e "${CYAN}║                       МОДУЛЬ 1 - СЕТЬ                         ║${NC}"
         echo -e "${CYAN}╚══════════════════════════════════════════════════════════════╝${NC}"
         echo ""
-        echo "1) Настройка имени хоста и статического IP (все хосты)"
-        echo "2) Настройка DHCP-клиента (клиент)"
-        echo "3) Настройка DNS-резолвера (HQ-SRV)"
-        echo "4) Настройка VLAN на интерфейсе (BR и HQ RTRы)"
-        echo "5) Настройка безопасного SSH (порт 2026, баннер) (HQ-SRV/BR-SRV)"
-        echo "6) Настройка DHCP-сервера (только команды для EcoRouter) (BR и HQ RTRы)"
-        echo "7) Настройка DNS-сервера BIND (HQ-SRV)"
-        echo "8) Настройка часового пояса (все хосты)"
-        echo "9) Создание локальных пользователей (HQ и BR SRVы и RTRы)"
-        echo "10) Настройка NAT и IP forwarding (HQ и BR RTRы)"
-        echo "11) Настройка DHCP-сервера (EcoRouter клон 6 пункта) (BR и HQ RTRы)"
-        echo "12) Вернуться в главное меню"
+        echo "1) Настройка ISP"
+        echo "2) Настройка имени хоста и статического IP (все хосты. РУЧКАМИ НАХУЙ)"
+        echo "3) Настройка DHCP-клиента (клиент)"
+        echo "4) Настройка DNS-резолвера (HQ-SRV)"
+        echo "5) Настройка VLAN на интерфейсе (BR и HQ RTRы)"
+        echo "6) Настройка безопасного SSH (порт 2026, баннер) (HQ-SRV/BR-SRV)"
+        echo "7) Настройка DHCP-сервера (только команды для EcoRouter) (BR и HQ RTRы)"
+        echo "8) Настройка DNS-сервера BIND (HQ-SRV)"
+        echo "9) Настройка часового пояса (все хосты)"
+        echo "10) Создание локальных пользователей (HQ и BR SRVы и RTRы)"
+        echo "11) Настройка NAT и IP forwarding (HQ и BR RTRы)"
+        echo "12) Настройка DHCP-сервера (EcoRouter клон 6 пункта) (BR и HQ RTRы)"
+        echo "13) Вернуться в главное меню"
         echo ""
         read -p "Выберите пункт: " choice
         
         case $choice in
-            1) setup_hostname_ip ;;
-            2) setup_dhcp_client ;;
-            3) setup_resolv_conf ;;
-            4) setup_vlan ;;
-            5) setup_secure_ssh ;;
-            6) setup_dhcp_server_commands ;;
-            7) setup_dns_server ;;
-            8) setup_timezone ;;
-            9) setup_local_users ;;
-            10) setup_nat_forwarding ;;
-            11) setup_dhcp_server ;;
-            12) break ;;
+            1) setup_full_isp ;;
+            2) setup_hostname_ip ;;
+            3) setup_dhcp_client ;;
+            4) setup_resolv_conf ;;
+            5) setup_vlan ;;
+            6) setup_secure_ssh ;;
+            7) setup_dhcp_server_commands ;;
+            8) setup_dns_server ;;
+            9) setup_timezone ;;
+            10) setup_local_users ;;
+            11) setup_nat_forwarding ;;
+            12) setup_dhcp_server ;;
+            13) break ;;
             *) echo -e "${RED}Неверный выбор!${NC}"; sleep 2 ;;
         esac
     done
 }
+
+setup_full_isp() {
+    echo -e "${BLUE}=== Настройка ISP ===${NC}"
+    echo ""
+
+    echo -e "${YELLOW}[1/5] Назначение хостнейма...${NC}"
+    hostnamectl set-hostname isp
+    sed -i "s/^HOSTNAME=.*/HOSTNAME=isp/" /etc/sysconfig/network
+    echo -e "${GREEN}✓ Имя хоста: isp${NC}"
+
+    read -p "Нажмите Enter для продолжения..."
+    echo -e -n "${CYAN}Введите IP-адрес, смотрящий в сторону HQ-RTR (пример, 172.16.1.1/28):${NC} "
+    read IP_ADDR_HQ_RTR
+    echo -e -n "${CYAN}Введите IP-адрес, смотрящий в сторону BR-RTR (пример, 172.16.2.1/28):${NC} "
+    read IP_ADDR_BR_RTR
+
+    echo -e "${YELLOW}[2/5] Автоматическая настройка адаптеров сети...${NC}"
+    echo -e "${CYAN}Определяем интерфейсы внутри машины по порядку...${NC}"
+
+    # Определение интерфейсов
+    echo -e "${CYAN}Найденные интерфейсы системой:${NC}"
+
+    ip -c --br a
+    
+    echo -e -n "${CYAN}Укажите необходимые интерфесы для конфигурирования через пробел. (например, ens19 ens20):${CN}" 
+    read INTERFACES
+
+
+    # Настройка интерфейсов
+
+    for interface in $INTERFACES; do
+        echo -e "${YELLOW}[3/5] Настройка интерфейса $interface...${NC}"
+        mkdir -p /etc/net/ifaces/$interface
+        touch /etc/net/ifaces/$interface/options
+        cat > /etc/net/ifaces/$interface/options <<EOF
+TYPE=eth
+BOOTPROTO=static
+CONFIG_IPV4=yes
+CONFIG_IPV6=no
+DISABLED=no
+NM_CONTROLLED=no
+SYSTEMD_CONTROLLED=no
+CONFIG_WIRELESS=no
+EOF         
+        read -p "Выберите какой IP-адрес назначить на интерфейс $interface (1 - HQ-RTR, 2 - BR-RTR): " choice
+        if [[ $choice == "1" ]]; then
+            echo "$IP_ADDR_HQ_RTR" > /etc/net/ifaces/$interface/ipv4address
+        elif [[ $choice == "2" ]]; then
+            echo "$IP_ADDR_BR_RTR" > /etc/net/ifaces/$interface/ipv4address
+        fi
+    done
+
+    echo -e "${GREEN}✓ IP-адресация настроена!${NC}"
+    echo -e "${YELLOW} [4/5] Замена sysctl - параметр ${CYAN}net.ipv4.ip_forward${NC}"
+
+    sed -i 's/net.ipv4.ip_forward = 0/net.ipv4.ip_forward = 1/' /etc/net/sysctl.conf
+    echo -e "${CYAN}Перезагрузка основного сервиса сети...${NC}"
+    systemctl restart network
+
+    echo -e ${GREEN}✓ sysctl изменен!${NC}
+    echo -e "${YELLOW}[5/5] Установка и настройка iptables${NC}"
+
+    echo -e ""
+    # Установка iptables
+    apt-get install -y iptables
+    
+    # Очистка старых правил
+    iptables -t nat -F
+    iptables -F
+    
+    echo -e -n "${CYAN}Укажите сети в сторону роутеров HQ и BR в соответствии с адресацией указанные выше через пробел (пример, 172.16.1.0/28 172.16.2.0/28):${NC} "
+    read INTERNAL_NETS
+
+    ip -c --br -4 a
+    echo -e -n "${CYAN}Укажите ОСНОВНОЙ ИНТЕРФЕЙС, который показывает на WAN (Интернет)${NC} "
+    read EXT_IF
+
+    # Добавление правил MASQUERADE
+    for net in $INTERNAL_NETS; do
+        iptables -t nat -A POSTROUTING -s $net -o $EXT_IF -j MASQUERADE
+        echo -e "${GREEN}✓ Добавлен NAT для сети $net${NC}"
+    done
+   
+    # Сохранение
+    mkdir -p /etc/sysconfig
+    iptables-save > /etc/sysconfig/iptables
+    systemctl enable --now iptables 2>/dev/null
+    
+    echo -e "${GREEN}✓ Первоначальные настройки ISP выполнены, можно приступать к дальнейшему выполнению!${NC}"
+    read -p "Нажми Enter..."
+    
+} 
 
 setup_hostname_ip() {
     clear
@@ -160,7 +254,7 @@ setup_resolv_conf() {
     ls /sys/class/net/ | grep -v lo
     read -p "Введите имя интерфейса: " INTERFACE
     read -p "Введите DNS-серверы через пробел: " DNS_SERVERS
-    read -p "Введите домен поиска: " DOMAIN
+    read -p "Введите домен поиска: " DOMAIN 
     
     mkdir -p /etc/net/ifaces/$INTERFACE
     cat > /etc/net/ifaces/$INTERFACE/resolv.conf <<EOF
@@ -286,7 +380,7 @@ setup_dns_server() {
     read -p "Введите доменную зону (например, au-team.irpo): " ZONE
     read -p "Введите DNS-серверы пересылки (forwarders) через пробел: " FORWARDERS
 
-    echo "Пример обратной зоны: 100.168.192.in-addr.arpa. (ВБИТЬ ТОЛЬКО НАЧАЛО, IP-адрес)"
+    echo -e "${BLUE}Пример обратной зоны: 100.168.192.in-addr.arpa. (ВБИТЬ ТОЛЬКО НАЧАЛО, IP-адрес)${NC}"
     read -p "Введите обратный IP-адрес первой зоны, если она есть (если нет Enter): " ZONE1_IP
     read -p "Введите обратный IP-адрес второй зоны, если она есть (если нет Enter): " ZONE2_IP
     
@@ -339,19 +433,19 @@ EOF
     ZONE_FILE="/var/lib/bind/etc/zone/$ZONE"
     SERIAL=$(date +%Y%m%d00)
 
-    echo "Настраиваем SOA и NS записи..."
+    echo -e "${BLUE}Настраиваем SOA и NS записи...${NC}"
     sed -i "s/localhost\./${ZONE}./g" "$ZONE_FILE"
     sed -i "s/root\.${ZONE}\./root.${ZONE}./g" "$ZONE_FILE" # На всякий случай корректируем root
     sed -i "s/2025110500/${SERIAL}/" "$ZONE_FILE"
 
-    echo "Добавляем базовые записи для самой зоны..."
+    echo -e "${BLUE}Добавляем базовые записи для самой зоны...${NC}"
     cat << EOF >> "$ZONE_FILE"
             IN      A       $DNS_IP
 EOF
 
     echo "--------------------------------------------------------"
-    echo "Теперь введите хосты (A-записи). Для завершения введите 'exit'"
-    echo "Пример ввода: hq-srv 192.168.100.2"
+    echo -e "${BLUE}Теперь введите хосты (A-записи). Для завершения введите 'exit'${NC}"
+    echo -e "${BLUE}Пример ввода: hq-srv 192.168.100.2 ...${NC}"
     echo "--------------------------------------------------------"    
 
     while true; do
@@ -364,7 +458,7 @@ EOF
         
         # Если IP не введен, просим повторить
         if [ -z "$IP" ]; then
-            echo "Ошибка: Вы не ввели IP для хоста $HOST. Попробуйте еще раз."
+            echo -e "${RED}Ошибка: Вы не ввели IP для хоста $HOST. Попробуйте еще раз.${NC}"
             continue
         fi
         
@@ -373,26 +467,26 @@ EOF
     done
 
     echo "---"
-    echo "Готово! Файл зоны успешно создан и заполнен: $ZONE_FILE"
-    echo "Вот его содержимое:"
+    echo -e "${GREEN}Готово! Файл зоны успешно создан и заполнен: $ZONE_FILE ...${NC}"
+    echo -e "${BLUE}Вот его содержимое:${NC}"
     cat "$ZONE_FILE"
 
-    echo "Создание обратной зоны для $ZONE1_IP.in-addr.arpa..."
+    echo -e "${BLUE}Создание обратной зоны для $ZONE1_IP.in-addr.arpa...${NC}"
 
     ZONE1_FILE="/var/lib/bind/etc/zone/$ZONE1_IP.in-addr.arpa"
     ZONE1_IP_FULL="$ZONE1_IP.in-addr.arpa"
     SERIAL1=$(date +%Y%m%d00)
 
-    echo "Настраиваем SOA и NS записи..."
+    echo -e "${BLUE}Настраиваем SOA и NS записи...${NC}"
     sed -i "s/localhost\./${ZONE}./g" "$ZONE1_FILE"
     sed -i "s/root\.${ZONE}\./root.${ZONE}./g" "$ZONE1_FILE" # На всякий случай корректируем root
     sed -i "s/2025110500/${SERIAL1}/" "$ZONE1_FILE"
 
     echo "--------------------------------------------------------"
-    echo "Теперь введите PTR-записи. Для завершения введите 'exit'"
-    echo "Пример ввода:"
-    echo "Последний октет IP: 1"
-    echo "Хостнейм: hq-rtr"
+    echo -e "${BLUE}Теперь введите PTR-записи. Для завершения введите 'exit'${NC}"
+    echo -e "${CYAN}Пример ввода:${NC}"
+    echo -e "${CYAN}Последний октет IP: 1${NC}"
+    echo -e "${CYAN}Хостнейм: hq-rtr${NC}"
     echo "--------------------------------------------------------"
 
     while true; do
@@ -408,7 +502,7 @@ EOF
         read -p "Хостнейм (без домена): " HOST_NAME
         
         if [ -z "$HOST_NAME" ]; then
-            echo "Ошибка: имя хоста не может быть пустым."
+            echo -e "${RED}Ошибка: имя хоста не может быть пустым.${NC}"
             continue
         fi
         
@@ -419,26 +513,26 @@ EOF
         # Дописываем строку в файл обратной зоны с красивым выравниванием
         printf "%-8s IN      PTR     %s\n" "$IP_OCTET" "$FULL_FQDN" >> "$ZONE1_FILE"
         
-        echo "Запись добавлена: $IP_OCTET IN PTR $FULL_FQDN"
+        echo -e  "${GREEN}Запись добавлена: $IP_OCTET IN PTR $FULL_FQDN ...${NC}"
         echo "---"
     done
 
-    echo "Создание обратной зоны для $ZONE2_IP.in-addr.arpa..."
+    echo -e "${BLUE}Создание обратной зоны для $ZONE2_IP.in-addr.arpa...${NC}"
 
     ZONE2_FILE="/var/lib/bind/etc/zone/$ZONE2_IP.in-addr.arpa"
     ZONE2_IP_FULL="$ZONE2_IP.in-addr.arpa"
     SERIAL2=$(date +%Y%m%d00)
 
-    echo "Настраиваем SOA и NS записи..."
+    echo -e "${BLUE}Настраиваем SOA и NS записи...${NC}"
     sed -i "s/localhost\./${ZONE}./g" "$ZONE2_FILE"
     sed -i "s/root\.${ZONE}\./root.${ZONE}./g" "$ZONE2_FILE" # На всякий случай корректируем root
     sed -i "s/2025110500/${SERIAL2}/" "$ZONE2_FILE"
 
     echo "--------------------------------------------------------"
-    echo "Теперь введите PTR-записи. Для завершения введите 'exit'"
-    echo "Пример ввода:"
-    echo "Последний октет IP: 1"
-    echo "Хостнейм: hq-rtr"
+    echo -e "${CYAN}Теперь введите PTR-записи. Для завершения введите 'exit'${NC}"
+    echo -e "${CYAN}Пример ввода:${NC}"
+    echo -e "${CYAN}Последний октет IP: 1 ...${NC}"
+    echo -e "${CYAN}Хостнейм: hq-rtr${NC}"
     echo "--------------------------------------------------------"
 
     while true; do
@@ -454,7 +548,7 @@ EOF
         read -p "Хостнейм (без домена): " HOST_NAME
         
         if [ -z "$HOST_NAME" ]; then
-            echo "Ошибка: имя хоста не может быть пустым."
+            echo -e "${RED}Ошибка: имя хоста не может быть пустым.${NC}"
             continue
         fi
         
@@ -465,7 +559,7 @@ EOF
         # Дописываем строку в файл обратной зоны с красивым выравниванием
         printf "%-8s IN      PTR     %s\n" "$IP_OCTET" "$FULL_FQDN" >> "$ZONE2_FILE"
         
-        echo "Запись добавлена: $IP_OCTET IN PTR $FULL_FQDN"
+        echo -e "${GREEN}Запись добавлена: $IP_OCTET IN PTR $FULL_FQDN ...${NC}"
         echo "---"
     done
 
@@ -522,10 +616,15 @@ setup_local_users() {
     echo -e "${BLUE}=== Создание локальных пользователей ===${NC}"
     echo ""
     
-    read -p "Введите имя пользователя: " USERNAME
-    read -p "Введите UID для пользователя: " USER_UID
-    read -p "Введите пароль для пользователя: " USER_PASS
-    read -s -p "Подтвердите пароль: " USER_PASS_CONFIRM
+
+    echo -e -n "${CYAN}Введите имя пользователя:${NC} "
+    read USERNAME
+    echo -e -n "${CYAN}Введите UID для пользователя: ${NC} "
+    read USER_UID
+    echo -e -n "${CYAN}Введите пароль для пользователя: ${NC}"
+    read USER_PASS
+    echo -e -n "${CYAN}Подтвердите пароль: ${NC}"
+    read USER_PASS_CONFIRM
     echo ""
     
     if [[ "$USER_PASS" != "$USER_PASS_CONFIRM" ]]; then
@@ -563,7 +662,7 @@ setup_nat_forwarding() {
     
     # Установка iptables
     apt-get install -y iptables
-    
+
     # Очистка старых правил
     iptables -t nat -F
     iptables -F
@@ -693,17 +792,9 @@ setup_samba_dc() {
     echo "nameserver 127.0.0.1" >> /etc/net/ifaces/$EXT_IF/resolv.conf
     systemctl restart network
 
-    echo "Проверяем конфигурацию..."
+    echo -e "${CYAN}Проверяем конфигурацию...${NC}"
     if samba-tool domain info 127.0.0.1 | grep -q "Domain"; then
         echo -e "${GREEN}✓ Конфигурация проверена${NC}"
-    fi
-
-    if host $DOMAIN_FULL | grep -q "has address"; then
-        echo -e "${GREEN}✓ DNS проверен${NC}"
-    fi
-
-    if host -t SRV _kerberos._udp.$DOMAIN_FULL. | grep -q "has SRV record"; then
-        echo -e "${GREEN}✓ DNS проверен${NC}"
     fi
 
     kinit administrator@$REALM
@@ -724,6 +815,8 @@ setup_samba_dc() {
     fi
     
     echo -e "${GREEN}✓ Samba DC настроен (домен: $DOMAIN)${NC}"
+    echo ""
+    echo -e "${YELLOW}============ ВАЖНЫЙ МЕССЕЙДЖ!!!!====================${NC}"
 
     echo "На клиенте не забудьте установить пакет авторизации: apt-get update && apt-get install -y task-auth-ad-sssd"
     echo ""
@@ -736,6 +829,8 @@ setup_samba_dc() {
     echo "Отредактируйте файл /etc/sudoers, взяв строчку:"
     echo "Cmnd_Alias    SHELLCMD = /bin/cat, /bin/grep, /usr/bin/id"
     echo "Также сделайте строчку: WHEEL_USERS ALL=(ALL:ALL) SHELLCMD"
+
+    echo -e "${YELLOW}============ ВАЖНЫЙ МЕССЕЙДЖ!!!!====================${NC}"
 
     read -p "Нажми Enter..."
 }
@@ -864,9 +959,20 @@ EOF
     
     systemctl enable --now chronyd
     
+    echo -e "${YELLOW}============ ВАЖНЫЙ МЕССЕЙДЖ!!!!====================${NC}"
+
+    echo ""
+
     echo "На HQ и BR RTRах прописать: ntp server [IP-адрес ISP]"
 
+    echo ""
+
+    echo -e "${YELLOW}============ ВАЖНЫЙ МЕССЕЙДЖ!!!!====================${NC}"
+    
+    echo ""
+    
     echo -e "${GREEN}✓ NTP клиент настроен на сервер $NTP_SERVER${NC}"
+    
     chronyc sources
     read -p "Нажми Enter..."
 }
@@ -935,7 +1041,7 @@ setup_ansible() {
 EOF
 
     echo "---"
-    echo "Файл инвентаря успешно сгенерирован: $INVENTORY_FILE"
+    echo -e "${GREEN}Файл инвентаря успешно сгенерирован: $INVENTORY_FILE ...${NC}"
     read -p "Нажми Enter..."
 
     CONFIG_FILE="/etc/ansible/ansible.cfg"
@@ -964,14 +1070,22 @@ EOF
         sed -i "/^\[defaults\]/a host_key_checking = False" "$CONFIG_FILE"
     fi    
 
-    echo "Конфигурация Ansible настроена"
+    echo -e "${GREEN}Конфигурация Ansible настроена${NC}"
 
     ansible-galaxy collection install ansible.netcommon
     ansible-galaxy collection install cisco.ios
 
-    echo "Пакеты для управления Ecosystem установлены"
-    echo "Не забудьте на HQ-RTR и BR-RTR зайти в conf t и ввести security none"
+    echo -e "${GREEN}Пакеты для управления EcoRouter (BR и HQ RTRы) установлены${NC}"
+
+    echo ""
+
+    echo -e "${YELLOW}============ ВАЖНЫЙ МЕССЕЙДЖ!!!!====================${NC}"
+
+    echo -e "Не забудьте на HQ-RTR и BR-RTR зайти в ${CYAN}conf t${NC} и ввести ${CYAN}security none${NC}"
+
+    echo -e "${YELLOW}============ ВАЖНЫЙ МЕССЕЙДЖ!!!!====================${NC}"
 }
+
 
 setup_docker() {
     clear
@@ -1060,12 +1174,20 @@ setup_lamp() {
     
     PHP_FILE="/var/www/html/index.php"
 
-    echo "----"
-    echo "ДОБАВИТЬ В ФАЙЛ /var/www/html/index.php СЛЕДУЮЩИЕ СТРОКИ"
+    echo -e "${YELLOW}============ ВАЖНЫЙ МЕССЕЙДЖ!!!!====================${NC}"
+    
     echo ""
+    
+    echo "ДОБАВИТЬ В ФАЙЛ /var/www/html/index.php СЛЕДУЮЩИЕ СТРОКИ"
+    
+    echo ""
+    
     echo "$dbname="webdb"; $password="P@ssw0rd"; $username = "webc";"
-    echo "----"
-
+    
+    echo ""
+    
+    echo -e "${YELLOW}============ ВАЖНЫЙ МЕССЕЙДЖ!!!!====================${NC}"
+    
     systemctl enable --now mariadb
 
     sleep 5
@@ -1083,17 +1205,35 @@ EOF
     mariadb -u webc -p'P@ssw0rd' -D webdb < /mnt/web/dump.sql    
     
     echo -e "${GREEN}✓ LAMP веб-приложение настроено${NC}"
+    echo ""
+
+    echo -e "${YELLOW}============ ВАЖНЫЙ МЕССЕЙДЖ!!!!====================${NC}"
+
+    echo ""
 
     echo "ТАКЖЕ! Нужно настроить на HQ-RTR и BR-RTR трансляцию портов:"
+    
     echo "ip nat source static tcp <IP-АДРЕС_УСТРОЙСТВА_ЛОКАЛЬНОЙ_СЕТИ> <ПОРТ_УСТРОЙСТВА_ЛОКАЛЬНОЙ_СЕТИ> <ВНЕШНИЙ_IP-АДРЕС_УСТРОЙСТВА> <ПОРТ_ДЛЯ_ОБРАЩЕНИЯ_ИЗ_ВНЕШНЕЙ_СЕТИ>"
+    
     echo "Прокидывается IP-адрес HQ-SRV с портом 80 на порт 8080 у HQ-RTR:"
+    
     echo "ip nat source static tcp [IP-АДРЕС_HQ-SRV] 80 [IP-АДРЕС_HQ-RTR-GLOBAL (к ISP)] 8080"
+    
     echo "Прокидывается IP-адрес HQ-SRV с портом 2026 на порт 2026 у HQ-RTR:"
+    
     echo "ip nat source static tcp [IP-АДРЕС_HQ-SRV] 2026 [IP-АДРЕС_HQ-RTR-GLOBAL (к ISP)] 2026"
+    
     echo "Прокидывается IP-адрес BR-SRV с портом 8080 на порт 8080 у BR-RTR:"
+    
     echo "ip nat source static tcp [IP-АДРЕС_BR-SRV] 8080 [IP-АДРЕС_BR-RTR-GLOBAL (к ISP)] 8080"
+    
     echo "Прокидывается IP-адрес BR-SRV с портом 2026 на порт 2026 у BR-RTR:"
+    
     echo "ip nat source static tcp [IP-АДРЕС_BR-SRV] 2026 [IP-АДРЕС_BR-RTR-GLOBAL (к ISP)] 2026"
+
+    echo ""
+
+    echo -e "${YELLOW}============ ВАЖНЫЙ МЕССЕЙДЖ!!!!====================${NC}"
 
     systemctl enable --now httpd2
 
@@ -1147,10 +1287,19 @@ setup_web_based () {
     htpasswd -bc /etc/nginx/.htpasswd WEB P@ssw0rd
 
     echo -e "${GREEN}✓ Web-Based аутентификация настроена${NC}"
-    echo "Необходимо добавить в файл /etc/nginx/sites-available.d/default.conf:"
+    echo ""
+
+    echo -e "${YELLOW}============ ВАЖНЫЙ МЕССЕЙДЖ!!!!====================${NC}"
+
+    echo -e "Необходимо добавить в файл ${CYAN}/etc/nginx/sites-available.d/default.conf${NC}:"
     echo "auth_basic "Restricted Access";"
     echo "auth_basic_user_file /etc/nginx/.htpasswd;"
     echo "Добавляйте там, где необходимо! См. задание 2.10"
+
+    echo ""
+
+    echo -e "${YELLOW}============ ВАЖНЫЙ МЕССЕЙДЖ!!!!====================${NC}"
+
 
     if nginx -t >/dev/null; then
         echo -e "${GREEN}✓ Nginx настроен${NC}"
@@ -1228,7 +1377,8 @@ import_users_csv() {
     read -p "Введите второе значение домена после точки (например, irpo при полном домене au-team.irpo): " DOMAIN2
     
     if [ ! -f "$CSV_FILE" ]; then
-        echo "Ошибка: Файл $CSV_FILE не найден!"
+        echo -e "${RED}Ошибка: Файл $CSV_FILE не найден! ЛОХ ЕБАННЫЙ ${NC}"
+        echo -e "${YELLOW}Подсказка: проверь монтирование командой mount (${CYAN}mount /dev/sr0 /mnt/${NC}) ${NC}"
         exit 1
     fi
     
@@ -1274,9 +1424,12 @@ setup_ca_gost() {
     echo -e "${BLUE}=== Настройка центра сертификации (ГОСТ) ===${NC}"
     echo ""
     
-    read -p "Введите IP адрес ISP для копирования сертификатов: " ISP_IP
-    read -p "Введите IP адрес HQ-CLI для копирования сертификатов: " CLI_IP
-    read -p "Введите хостнеймы сервисов через пробел каждый (например, web.au-team.irpo docker.au-team.irpo): " HOSTNAMES
+    echo -e -n "${CYAN}Введите IP адрес ISP для копирования сертификатов: ${NC}"
+    rehad ISP_IP
+    echo -e -n "${CYAN}Введите IP адрес HQ-CLI для копирования сертификатов: ${NC}"
+    read CLI_IP
+    echo -e -n "${CYAN}Введите хостнеймы сервисов через пробел каждый (например, web.au-team.irpo docker.au-team.irpo):${NC} " 
+    read HOSTNAMES
     
     apt-get install -y openssl-gost-engine
     control openssl-gost enabled 2>/dev/null
@@ -1284,24 +1437,34 @@ setup_ca_gost() {
     mkdir -p /etc/ssl/certs /etc/ssl/private
     cd /etc/ssl/certs
 
-    echo "Создание закрытого ключа ГОСТ-2012"    
+    echo -e "${BLUE}Создание закрытого ключа ГОСТ-2012${NC}"    
     openssl genpkey -algorithm gost2012_256 -pkeyopt paramset:TCB -out ca.key
-    echo "Создание корневого сертификата сертификата на 30 дней"
-    echo "При запросе CN: RU, OrgName = au-team.irpo, Common Name - хостнейм сервера полностью"
+    echo -e "${BLUE}Создание корневого сертификата сертификата на 30 дней${NC}"
+    echo -e "${YELLOW}При запросе CN: RU, OrgName = au-team.irpo, Common Name - хостнейм сервера полностью${NC}"
     openssl req -new -x509 -md_gost12_256 -days 30 -key ca.key -out ca.cer
     
     for hostname_domain in $HOSTNAMES; do
-        echo "Генерация ключа и сертификата для $hostname_domain"
+        echo -e "${BLUE}Генерация ключа и сертификата для $hostname_domain ...${NC}"
         openssl genpkey -algorithm gost2012_256 -pkeyopt paramset:A -out ${hostname_domain}.key
-        echo "CN - ЭТО ХОСТНЕЙМ СЕРВИСА ПОЛНОСТЬЮ С ДОМЕНОМ, ПРИМЕР: web.au-team.irpo)"
+        echo -e "${YELLOW}CN - ЭТО ХОСТНЕЙМ СЕРВИСА ПОЛНОСТЬЮ С ДОМЕНОМ, ПРИМЕР: web.au-team.irpo)${NC}"
         openssl req -new -md_gost12_256 -key ${hostname_domain}.key -out ${hostname_domain}.csr
 
         openssl x509 -req -in ${hostname_domain}.csr -CA ca.cer -CAkey ca.key -CAcreateserial \
             -out ${hostname_domain}.cer -days 30
     done
 
+    echo ""
+
+    echo -e "${YELLOW}======= ЕЩЕ ОДИН ВАЖНЫЙ МЕССЕЙДЖ ======== {$NC}"
+
+    echo ""
+
     echo "Внимание! Не забудьте включить доступ по ssh для пользователя root на ISP:"
     echo "vim /etc/openssh/sshd_config и PermitRootLogin yes, затем перезапустить systemctl restart sshd"
+
+    echo ""
+
+    echo -e "${YELLOW}======= ЕЩЕ ОДИН ВАЖНЫЙ МЕССЕЙДЖ ======== {$NC}"
 
     read -p "Как только все сделали, нажмите Enter, чтобы продолжить..."
 
@@ -1321,10 +1484,14 @@ setup_nginx_https_gost() {
     echo -e "${BLUE}=== Настройка Nginx HTTPS с ГОСТ ===${NC}"
     echo ""
     
-    read -p "Введите первый сервис (например, web.au-team.irpo): " WEB_BACKEND
-    read -p "Введите второй сервис (например, docker.au-team.irpo): " DOCKER_BACKEND
-    read -p "Введите IP-адрес для первого сервиса (например, 172.16.1.2): " WEB_BACKEND_IP
-    read -p "Введите IP-адрес для второго сервиса (например, 172.16.2.2): " DOCKER_BACKEND_IP
+    echo -e -n "${CYAN}Введите первый сервис (например, web.au-team.irpo)${NC} "
+    read WEB_BACKEND
+    echo -e -n "${CYAN}Введите второй сервис (например, docker.au-team.irpo)${NC} "
+    read DOCKER_BACKEND
+    echo -e -n "${CYAN}Введите IP-адрес для первого сервиса (например, 172.16.1.1): ${NC}"
+    read WEB_BACKEND_IP
+    echo -e -n "${CYAN}Введите IP-адрес для второго сервиса (например, 172.16.2.2): ${NC}"
+    read DOCKER_BACKEND_IP
     
     apt-get install -y openssl-gost-engine
     control openssl-gost enabled 2>/dev/null
@@ -1395,12 +1562,21 @@ install_root_certificate() {
         echo -e "${RED}Файл не найден!${NC}"
     fi
 
+    echo -e "${YELLOW}======= ВАЖНЫЙ КОМЕНТИК ======== {$NC}"
+    
+    echo ""
+    
     echo "ЕСЛИ ПРОТОКОЛ НЕ ПОДДЕРЖИВАЕТСЯ, КОГДА ВЫ ЗАШЛИ НА КЛИЕНТЕ:"
+    
     echo "Заходим на сайт cryptopro.ru на HQ-CLI"
+    
     echo "Выбираем Продукты -> КриптоПро CSP -> Скачать КриптоПро CSP"
+    
     echo "Заполняем данные, выбираем скачать для Linux RPM"
+    
     echo "Запускаем, в наборе для установки пометить <Импортировать корневые сертификаты из ОС>"
 
+    echo -e "${YELLOW}======= ВАЖНЫЙ КОМЕНТИК ======== {$NC}"
     read -p "Нажми Enter..."
 }
 
@@ -1408,18 +1584,22 @@ setup_cups_server_v3() {
     clear
     echo -e "${BLUE}=== Настройка CUPS принт-сервера (HQ-SRV) ===${NC}"
     echo ""
-    
+
     apt-get install -y cups cups-pdf
     systemctl enable --now cups
     cupsctl --share-printers --remote-any
 
+    echo -e "${YELLOW}======= ВАЖНЫЙ КОМЕНТИК ======== {$NC}"
+    echo ""
     echo "На HQ-CLI прописать в /etc/hosts сервак HQ-SRV, ну либо с помощью samba-tool на BR-SRV прописать DNS запись:"
     echo "samba-tool domain dns record add hq-srv.au-team.irpo"
 
     echo "Также на HQ-CLI залетаем в Настройки, Принтеры и добавляем принтер блин. Делаем пробную печать."
     echo "По итогу, на HQ-SRV в ls -l /var/spool/cups/ создаются файлы-пробники"
 
-    
+    echo ""
+    echo -e "${YELLOW}======= ВАЖНЫЙ КОМЕНТИК ======== {$NC}"
+    echo ""
     echo -e "${GREEN}✓ CUPS принт-сервер настроен."
     read -p "Нажми Enter..."
 }
@@ -1429,9 +1609,12 @@ setup_cups_client_v3() {
     echo -e "${BLUE}=== Настройка CUPS клиента ===${NC}"
     echo ""
     
-    read -p "Введите IP-адрес CUPS сервера: " SERVER_IP
-    read -p "Введите имя принтера на сервере: " PRINTER_NAME
-    read -p "Введите локальное имя принтера: " LOCAL_PRINTER
+    echo -e -n "${CYAN}Введите IP-адрес CUPS сервера: ${NC} "
+    read SERVER_IP
+    echo -e -n "${CYAN}Введите имя принтера на сервере: ${NC} "
+    read PRINTER_NAME
+    echo -e -n "${CYAN}Введите локальное имя принтера: ${NC} "
+    read LOCAL_PRINTER
     
     apt-get install -y cups-client cups-common
     
@@ -1452,7 +1635,8 @@ setup_ipsec_vpn() {
     echo -e "${BLUE}=== Настройка IKE VPN ===${NC}"
     echo ""
 
-    echo "На HQ-RTR делаем:"
+    echo -e "${YELLOW}================ HQ-RTR ================= ${NC}"
+    echo ""
     echo "conf t"
     echo "hq-rtr(config)#crypto-ipsec ike enable"
     echo "hq-rtr(config)#crypto-ipsec profile CIPROFILE ike-v2"
@@ -1491,7 +1675,12 @@ setup_ipsec_vpn() {
     echo "hq-rtr(config-if-tunnel)#exit"
     echo "hq-rtr(config)#write memory"
     
-    echo "На BR-RTR:"
+    echo ""
+    echo -e "${YELLOW}================ HQ-RTR ================= ${NC}"
+    echo ""
+
+    echo -e "${YELLOW}============= BR-RTR: ================ ${NC}"
+    echo ""
     echo "br-rtr(config)#crypto-ipsec ike enable"
     echo "br-rtr(config)#crypto-ipsec profile CIPROFILE ike-v2"
     echo "br-rtr(config-ipsec-ikev2)#mode tunnel"
@@ -1530,6 +1719,14 @@ setup_ipsec_vpn() {
     echo "br-rtr(config-if-tunnel)#set filter-map in FMAP 10"
     echo "br-rtr(config-if-tunnel)#exit"
     echo "br-rtr(config)#write memory"    
+
+    echo ""
+
+    echo -e "${YELLOW}============= BR-RTR: ================ ${NC}"
+
+    echo ""
+    echo -e "${GREEN} Введите все команды, указанные выше.${NC}"
+    echo ""
 
     read -p "Нажми Enter..."
 }

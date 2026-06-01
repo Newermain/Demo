@@ -123,16 +123,15 @@ setup_full_isp() {
         echo -e "${YELLOW}[3/5] Настройка интерфейса $interface...${NC}"
         mkdir -p /etc/net/ifaces/$interface
         touch /etc/net/ifaces/$interface/options
-        cat > /etc/net/ifaces/$interface/options <<EOF
-TYPE=eth
-BOOTPROTO=static
-CONFIG_IPV4=yes
-CONFIG_IPV6=no
-DISABLED=no
-NM_CONTROLLED=no
-SYSTEMD_CONTROLLED=no
-CONFIG_WIRELESS=no
-EOF         
+
+        echo "TYPE=eth" > /etc/net/ifaces/$interface/options
+        echo "BOOTPROTO=static" >> /etc/net/ifaces/$interface/options
+        echo "CONFIG_IPV4=yes" >> /etc/net/ifaces/$interface/options
+        echo "CONFIG_IPV6=no" >> /etc/net/ifaces/$interface/options
+        echo "DISABLED=no" >> /etc/net/ifaces/$interface/options
+        echo "NM_CONTROLLED=no" >> /etc/net/ifaces/$interface/options
+        echo "SYSTEMD_CONTROLLED=no" >> /etc/net/ifaces/$interface/options
+
         read -p "Выберите какой IP-адрес назначить на интерфейс $interface (1 - HQ-RTR, 2 - BR-RTR): " choice
         if [[ $choice == "1" ]]; then
             echo "$IP_ADDR_HQ_RTR" > /etc/net/ifaces/$interface/ipv4address
@@ -191,6 +190,7 @@ setup_dhcp_client() {
     read -p "Введите имя интерфейса для DHCP: " INTERFACE
     
     mkdir -p /etc/net/ifaces/$INTERFACE
+    
     cat > /etc/net/ifaces/$INTERFACE/options <<EOF
 TYPE=eth
 BOOTPROTO=dhcp

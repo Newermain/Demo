@@ -153,7 +153,7 @@ EOF
     echo -e "${CYAN}Перезагрузка основного сервиса сети...${NC}"
     systemctl restart network
 
-    echo -e ${GREEN}✓ sysctl изменен!${NC}
+    echo -e "${GREEN}✓ sysctl изменен!${NC}"
     echo -e "${YELLOW}[5/5] Установка и настройка iptables${NC}"
 
     echo -e ""

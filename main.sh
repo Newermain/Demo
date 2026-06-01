@@ -61,6 +61,7 @@ module1_menu() {
         echo -e "${CYAN}╚══════════════════════════════════════════════════════════════╝${NC}"
         echo ""
         echo "1) Настройка ISP"
+        echo "2) Базовые настройки самых крутых роутеров (HQ-RTR и BR-RTR)"
         echo "3) Настройка DHCP-клиента (клиент)"
         echo "4) Настройка DNS-резолвера (HQ-SRV)"
         echo "5) Настройка VLAN на интерфейсе (BR и HQ RTRы)"
@@ -77,6 +78,7 @@ module1_menu() {
         
         case $choice in
             1) setup_full_isp ;;
+            2) setup_basic_routers ;;
             3) setup_dhcp_client ;;
             4) setup_resolv_conf ;;
             5) setup_vlan ;;
@@ -103,6 +105,7 @@ setup_full_isp() {
     echo -e "${GREEN}✓ Имя хоста: isp${NC}"
 
     read -p "Нажмите Enter для продолжения..."
+    echo "IP-адреса ВТОРОЙ ПОДГРУППЫ: 172.16.70.0/28 к HQ-RTR;; 172.16.80.0/28 к BR-RTR"
     echo -e -n "${CYAN}Введите IP-адрес, смотрящий в сторону HQ-RTR (пример, 172.16.1.1/28):${NC} "
     read IP_ADDR_HQ_RTR
     echo -e -n "${CYAN}Введите IP-адрес, смотрящий в сторону BR-RTR (пример, 172.16.2.1/28):${NC} "
@@ -179,6 +182,116 @@ setup_full_isp() {
     echo -e "${GREEN}✓ Первоначальные настройки ISP выполнены, можно приступать к дальнейшему выполнению!${NC}"
     read -p "Нажми Enter..." 
 } 
+
+setup_basic_routers() {
+    clear
+
+    echo -e "${BLUE}=== Настройки роутеров HQ-RTR и BR-RTR === ${NC}"
+    echo ""
+
+    read -p "Введите первый VLAN ID для HQ-RTR в сторону HQ-SRV (пример, 100)" HQ_VLAN_1
+    read -p "Введите второй VLAN ID для HQ-RTR в сторону HQ-CLI (пример, 200)" HQ_VLAN_2
+    read -p "Введите третий VLAN ID для HQ (управление) (пример, 99)" HQ_VLAN_3
+
+    read -p "Введите первый IP-адрес подсети вместе с маской (пример, 192.168.100.1/27) для HQ-RTR в сторону HQ-SRV" HQ_IP_RTR_1
+    read -p "Введите второй IP-адрес подсети вместе с маской (пример, 192.168.200.1/24) для HQ-RTR в сторону HQ-CLI" HQ_IP_RTR_2
+    read -p "Введите третий IP-адрес подсети вместе с маской (пример, 192.168.99.1/29) для HQ (управление)" HQ_IP_RTR_3
+
+    read -p "Введите первый IP-адрес подсети BR-Net (пример, 192.168.0.1/28)" BR_IP_NET_1
+
+    echo -e "${YELLOW}Все выполняемые команды необходимо ввести вручную (либо Ctrl+C и Ctrl+V если xterm.js терминал)!${NC}"
+    read -p "Нажми Enter, если готов размять пальцы..."
+
+    echo ""
+    echo -e "${CYAN}============ HQ-RTR ============${NC}"
+    echo ""
+
+    echo "ecorouter>enable"
+    echo "ecorouter#configure terminal"
+    echo "ecorouter(config)#hostname br-rtr"
+    echo "br-rtr(config)#ip domain-name au-team.irpo (ИЛИ СВОЙ ДОМЕН НА ВЫБОР КОМИССИИ)"
+    echo "br-rtr(config)#write memory"
+
+    echo -e "${YELLOW}ПРОВЕРКА: show hostname и/или show running-config | include domain-name${NC}"
+
+    echo "hq-rtr(config)#interface vl${HQ_VLAN_1}"
+    echo "hq-rtr(config-if)#description VLAN${HQ_VLAN_1}"
+    echo "hq-rtr(config-if)#ip address ${HQ_IP_RTR_1}"
+    echo "hq-rtr(config-if)#exit"
+
+    echo "hq-rtr(config)#interface vl${HQ_VLAN_2}"
+    echo "hq-rtr(config-if)#description VLAN${HQ_VLAN_2}"
+    echo "hq-rtr(config-if)#ip address ${HQ_IP_RTR_2}"
+    echo "hq-rtr(config-if)#exit"
+
+    echo "hq-rtr(config)#interface vl${HQ_VLAN_3}"
+    echo "hq-rtr(config-if)#description VLAN${HQ_VLAN_3}"
+    echo "hq-rtr(config-if)#ip address ${HQ_IP_RTR_3}"
+    echo "hq-rtr(config-if)#exit"
+
+    echo "hq-rtr(config)#write memory"
+
+    echo -e "${CYAN}Создаем сервисные инстансы в сторону каждого созданного VLAN-интерфейса...${NC}"
+    echo -e "hq-rtr(config)#port te1"
+    echo -e "hq-rtr(config-port)#service-instance te1/vl${HQ_VLAN_1}"
+    echo -e "hq-rtr(config-service-instance)#encapsulation dot1q ${HQ_VLAN_1} exact"
+    echo -e "hq-rtr(config-service-instance)#rewrite pop 1"
+    echo -e "hq-rtr(config-service-instance)#connect ip interface vl${HQ_VLAN_1}"
+    echo -e "hq-rtr(config-service-instance)#exit"
+
+    echo -e "hq-rtr(config-port)#service-instance te1/vl${HQ_VLAN_2}"
+    echo -e "hq-rtr(config-service-instance)#encapsulation dot1q ${HQ_VLAN_2} exact"
+    echo -e "hq-rtr(config-service-instance)#rewrite pop 1"
+    echo -e "hq-rtr(config-service-instance)#connect ip interface vl${HQ_VLAN_2}"
+    echo -e "hq-rtr(config-service-instance)#exit"
+
+    echo -e "hq-rtr(config-port)#service-instance te1/vl${HQ_VLAN_3}"
+    echo -e "hq-rtr(config-service-instance)#encapsulation dot1q ${HQ_VLAN_3} exact"
+    echo -e "hq-rtr(config-service-instance)#rewrite pop 1"
+    echo -e "hq-rtr(config-service-instance)#connect ip interface vl${HQ_VLAN_3}"
+    echo -e "hq-rtr(config-service-instance)#exit"
+
+    echo -e "hq-rtr(config-port)#exit"
+    echo -e "hq-rtr(config)#write memory"
+
+    echo ""
+    echo -e "${CYAN}============ HQ-RTR ============${NC}"
+
+    read -p "Нажми Enter, чтобы перейти к BR-RTR..."
+
+    echo ""
+    echo -e "${CYAN}============ BR-RTR ============${NC}"
+    echo ""
+
+    echo "ecorouter>enable"
+    echo "ecorouter#conf t"
+    echo "ecorouter(config)#hostname br-rtr"
+    echo "br-rtr(config)#ip domain-name au-team.irpo (ИЛИ СВОЙ ДОМЕН НА ВЫБОР КОМИССИИ)"
+    echo "br-rtr(config)#write memory"
+
+    echo -e "${YELLOW}ПРОВЕРКА: show hostname и/или show running-config | include domain-name${NC}"
+
+    echo "br-rtr(config)#interface int1 (или любой произвольный)"
+    echo "br-rtr(config-if)#description BR-Net (или любой произвольный)"
+    echo "br-rtr(config-if)#ip address ${BR_IP_RTR_1}"
+    echo "br-rtr(config-if)#exit"
+
+    echo -e "${CYAN}Создаем сервисный инстанс в сторону созданного интерфейса...${NC}"
+    echo -e "br-rtr(config)#port te1"
+    echo -e "br-rtr(config-port)#service-instance te1/int1"
+    echo -e "br-rtr(config-service-instance)#encapsulation untagged"
+    echo -e "br-rtr(config-service-instance)#connect ip interface int1"
+    echo -e "br-rtr(config-service-instance)#exit"
+    echo -e "br-rtr(config-port)#exit"
+    echo -e "br-rtr(config)#write memory"
+
+    echo ""
+    echo -e "${CYAN}============ BR-RTR ============${NC}"
+
+    echo ""
+    echo -e "${GREEN}✓ Роутеры настроены${NC}"
+    read -p "Нажми Enter..."
+}
 
 setup_dhcp_client() {
     clear

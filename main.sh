@@ -189,15 +189,29 @@ setup_basic_routers() {
     echo -e "${BLUE}=== Настройки роутеров HQ-RTR и BR-RTR === ${NC}"
     echo ""
 
-    read -p "Введите первый VLAN ID для HQ-RTR в сторону HQ-SRV (пример, 100)" HQ_VLAN_1
-    read -p "Введите второй VLAN ID для HQ-RTR в сторону HQ-CLI (пример, 200)" HQ_VLAN_2
-    read -p "Введите третий VLAN ID для HQ (управление) (пример, 99)" HQ_VLAN_3
+    read -p "Введите первый VLAN ID для HQ-RTR в сторону HQ-SRV (пример, 100): " HQ_VLAN_1
+    read -p "Введите второй VLAN ID для HQ-RTR в сторону HQ-CLI (пример, 200): " HQ_VLAN_2
+    read -p "Введите третий VLAN ID для HQ (управление) (пример, 99): " HQ_VLAN_3
 
-    read -p "Введите первый IP-адрес подсети вместе с маской (пример, 192.168.100.1/27) для HQ-RTR в сторону HQ-SRV" HQ_IP_RTR_1
-    read -p "Введите второй IP-адрес подсети вместе с маской (пример, 192.168.200.1/24) для HQ-RTR в сторону HQ-CLI" HQ_IP_RTR_2
-    read -p "Введите третий IP-адрес подсети вместе с маской (пример, 192.168.99.1/29) для HQ (управление)" HQ_IP_RTR_3
+    read -p "Введите первый IP-адрес подсети вместе с маской (пример, 192.168.100.1/27) для HQ-RTR в сторону HQ-SRV: " HQ_IP_RTR_1
+    read -p "Введите первый IP-адрес подсети вместе с маской (пример, 192.168.200.1/24) для HQ-RTR в сторону HQ-CLI: " HQ_IP_RTR_2
+    read -p "Введите первый IP-адрес подсети вместе с маской (пример, 192.168.99.1/29) для HQ (управление): " HQ_IP_RTR_3
 
-    read -p "Введите первый IP-адрес подсети BR-Net (пример, 192.168.0.1/28)" BR_IP_NET_1
+    HQ_NET_1="${HQ_IP_RTR_1/\.[0-9]*\//.0/}"
+    HQ_NET_2="${HQ_IP_RTR_2/\.[0-9]*\//.0/}"
+    HQ_NET_3="${HQ_IP_RTR_3/\.[0-9]*\//.0/}"
+
+    read -p "Введите первый IP-адрес подсети BR-Net (пример, 192.168.0.1/28): " BR_IP_NET_1
+    BR_NET_1="${BR_IP_NET_1/\.[0-9]*\//.0/}"
+
+    echo -e "${YELLOW}Напоминалка сети для HQ-RTR в сторону ISP: 172.16.70.0/28"
+    echo -e "${YELLOW}Напоминалка сети для BR-RTR в сторону ISP: 172.16.80.0/28"
+
+    read -p "Вбейте второй IP-адрес подсети вместе с маской (пример, 172.16.70.2/28) для HQ-RTR в сторону ISP: " ISP_IP_RTR_1
+    read -p "Вбейте второй IP-адрес подсети вместе с маской (пример, 172.16.80.2/28) для BR-RTR в сторону ISP: " ISP_IP_RTR_2
+
+    read -p "Вбейте адрес ISP от 172.16.70.0/28 (пример, 172.16.70.1): " ISP_IP_1
+    read -p "Вбейте адрес ISP от 172.16.80.0/28 (пример, 172.16.80.1): " ISP_IP_2
 
     echo -e "${YELLOW}Все выполняемые команды необходимо ввести вручную (либо Ctrl+C и Ctrl+V если xterm.js терминал)!${NC}"
     read -p "Нажми Enter, если готов размять пальцы..."
@@ -208,9 +222,9 @@ setup_basic_routers() {
 
     echo "ecorouter>enable"
     echo "ecorouter#configure terminal"
-    echo "ecorouter(config)#hostname br-rtr"
-    echo "br-rtr(config)#ip domain-name au-team.irpo (ИЛИ СВОЙ ДОМЕН НА ВЫБОР КОМИССИИ)"
-    echo "br-rtr(config)#write memory"
+    echo "ecorouter(config)#hostname hq-rtr"
+    echo "hq-rtr(config)#ip domain-name au-team.irpo (ИЛИ СВОЙ ДОМЕН НА ВЫБОР КОМИССИИ)"
+    echo "hq-rtr(config)#write memory"
 
     echo -e "${YELLOW}ПРОВЕРКА: show hostname и/или show running-config | include domain-name${NC}"
 
@@ -229,6 +243,19 @@ setup_basic_routers() {
     echo "hq-rtr(config-if)#ip address ${HQ_IP_RTR_3}"
     echo "hq-rtr(config-if)#exit"
 
+    echo "hq-rtr(config)#write memory"
+
+    echo "hq-rtr(config)#interface isp"
+    echo "hq-rtr(config-if)#desciption ISP"
+    echo "hq-rtr(config-if)#ip address ${ISP_IP_RTR_1}"
+    echo "hq-rtr(config-if)#exit"
+
+    echo "hq-rtr(config)#ip route 0.0.0.0/0 ${ISP_IP_1}"
+    echo "hq-rtr(config)#port te0"
+    echo "hq-rtr(config)#service-instance te0/isp"
+    echo "hq-rtr(config-service-instance)#encapsulation untagged"
+    echo "hq-rtr(config-service-instance)#connect ip interface isp"
+    echo "hq-rtr(config-service-instance)#exit"
     echo "hq-rtr(config)#write memory"
 
     echo -e "${CYAN}Создаем сервисные инстансы в сторону каждого созданного VLAN-интерфейса...${NC}"
@@ -253,6 +280,78 @@ setup_basic_routers() {
 
     echo -e "hq-rtr(config-port)#exit"
     echo -e "hq-rtr(config)#write memory"
+
+    echo "hq-rtr(config)#username net_admin"
+    echo "hq-rtr(config-user)#password P@ssw0rd"
+    echo "hq-rtr(config-user)#role admin"
+    echo "hq-rtr(config-user)#exit"
+    echo "hq-rtr(config)#write memory"
+
+    echo "hq-rtr(config)#interface tunnel.0"
+    echo "hq-rtr(config-if-tunnel)#description GRE"
+    echo "hq-rtr(config-if-tunnel)#ip address 10.10.10.1/30"
+    echo "hq-rtr(config-if-tunnel)#ip tunnel ${ISP_IP_RTR_1} ${ISP_IP_RTR_2} mode gre"
+    echo "hq-rtr(config-if-tunnel)#exit"
+    echo "hq-rtr(config)#write memory"
+
+    echo "hq-rtr(config)#router ospf 1"
+    echo "hq-rtr(config-router)#ospf router-id 10.10.10.1"
+    echo "hq-rtr(config-router)#passive-interface default"
+    echo "hq-rtr(config-router)#no passive-interface tunnel.0"
+    echo "hq-rtr(config-router)#network 10.10.10.0/30 area 0"
+    echo "hq-rtr(config-router)#network ${HQ_NET_1} area 0"
+    echo "hq-rtr(config-router)#network ${HQ_NET_2} area 0"
+    echo "hq-rtr(config-router)#network ${HQ_NET_3} area 0"
+    echo "hq-rtr(config-router)#exit"
+    echo "hq-rtr(config)#interface tunnel.0"
+    echo "hq-rtr(config-if-tunnel)#ip ospf authentication message-digest"
+    echo "hq-rtr(config-if-tunnel)#ip ospf message-digest-key 1 md5 P@ssw0rd"
+    echo "hq-rtr(config-if-tunnel)#exit"
+    echo "hq-rtr(config)#write memory"
+
+    echo "hq-rtr(config)#interface isp"
+    echo "hq-rtr(config-if)#ip nat outside"
+    echo "hq-rtr(config-if)#exit"
+    echo "hq-rtr(config)#interface vl${HQ_VLAN_1}"
+    echo "hq-rtr(config-if)#ip nat inside"
+    echo "hq-rtr(config-if)#exit"
+    echo "hq-rtr(config)#interface vl${HQ_VLAN_2}"
+    echo "hq-rtr(config-if)#ip nat inside"
+    echo "hq-rtr(config-if)#exit"
+    echo "hq-rtr(config)#interface vl${HQ_VLAN_3}"
+    echo "hq-rtr(config-if)#ip nat inside"
+    echo "hq-rtr(config-if)#exit"
+
+    read -p "Введите пул адресов для VLAN${HQ_VLAN_1}: (пример, 192.168.100.1-192.168.100.30) " HQ_POOL_1
+    read -p "Введите пул адресов для VLAN${HQ_VLAN_2}: (пример, 192.168.200.1-192.168.200.254) " HQ_POOL_2
+    read -p "Введите пул адресов для VLAN${HQ_VLAN_3}: (пример, 192.168.99.1-192.168.99.6)" HQ_POOL_3
+
+    echo "hq-rtr(config)#ip nat pool VLAN${HQ_VLAN_1} ${HQ_POOL_1}"
+    echo "hq-rtr(config)#ip nat pool VLAN${HQ_VLAN_2} ${HQ_POOL_2}"
+    echo "hq-rtr(config)#ip nat pool VLAN${HQ_VLAN_3} ${HQ_POOL_3}"
+    
+    echo "hq-rtr(config)#ip nat source dynamic inside-to-outside pool VLAN${HQ_VLAN_1} overload interface isp"
+    echo "hq-rtr(config)#ip nat source dynamic inside-to-outside pool VLAN${HQ_VLAN_2} overload interface isp"
+    echo "hq-rtr(config)#ip nat source dynamic inside-to-outside pool VLAN${HQ_VLAN_3} overload interface isp"
+    echo "hq-rtr(config)#exit"
+    echo "hq-rtr(config)#write memory"
+
+    echo "---- КОНФИГУР DHCP:"
+    echo "hq-rtr(config)#ip pool VLAN${HQ_VLAN_2} ${HQ_POOL_2}"
+    echo "hq-rtr(config)#dhcp-server 1"
+    echo "hq-rtr(config-dhcp-server)#pool VLAN${HQ_VLAN_2} 1"
+    echo "hq-rtr(config-dhcp-server-pool)#mask 24"
+    echo "hq-rtr(config-dhcp-server-pool)#gateway $HQ_IP_RTR_2"
+    echo "hq-rtr(config-dhcp-server-pool)#dns 192.168.100.2 (ну там другой ип)"
+    echo "hq-rtr(config-dhcp-server-pool)#domain-name au-team.irpo" 
+    echo "hq-rtr(config-dhcp-server-pool)#exit"
+    echo "hq-rtr(config-dhcp-server)#exit"
+
+    echo "hq-rtr(config)#interface vl${HQ_VLAN_2}"
+    echo "hq-rtr(config-if)#dhcp-server 1"
+    echo "hq-rtr(config-if)#exit"
+
+    echo "hq-rtr(config)#write memory"
 
     echo ""
     echo -e "${CYAN}============ HQ-RTR ============${NC}"
@@ -284,6 +383,61 @@ setup_basic_routers() {
     echo -e "br-rtr(config-service-instance)#exit"
     echo -e "br-rtr(config-port)#exit"
     echo -e "br-rtr(config)#write memory"
+
+    echo "br-rtr(config)#interface isp"
+    echo "br-rtr(config-if)#desciption ISP"
+    echo "br-rtr(config-if)#ip address ${ISP_IP_RTR_2}"
+    echo "br-rtr(config-if)#exit"
+
+    echo "br-rtr(config)#ip route 0.0.0.0/0 ${ISP_IP_2}"
+    echo "br-rtr(config)#port te0"
+    echo "br-rtr(config)#service-instance te0/isp"
+    echo "br-rtr(config-service-instance)#encapsulation untagged"
+    echo "br-rtr(config-service-instance)#connect ip interface isp"
+    echo "br-rtr(config-service-instance)#exit"
+    echo "br-rtr(config)#write memory"
+
+    echo "br-rtr(config)#username net_admin"
+    echo "br-rtr(config-user)#password P@ssw0rd"
+    echo "br-rtr(config-user)#role admin"
+    echo "br-rtr(config-user)#exit"
+    echo "br-rtr(config)#write memory"
+
+    echo "br-rtr(config)#interface tunnel.0"
+    echo "br-rtr(config-if-tunnel)#description GRE"
+    echo "br-rtr(config-if-tunnel)#ip address 10.10.10.2/30"
+    echo "br-rtr(config-if-tunnel)#ip tunnel ${ISP_IP_RTR_2} ${ISP_IP_RTR_1} mode gre"
+    echo "br-rtr(config-if-tunnel)#exit"
+    echo "br-rtr(config)#write memory"    
+
+    echo "br-rtr(config)#router ospf 1"
+    echo "br-rtr(config-router)#ospf router-id 10.10.10.2"
+    echo "br-rtr(config-router)#passive-interface default"
+    echo "br-rtr(config-router)#no passive-interface tunnel.0"
+    echo "br-rtr(config-router)#network ${BR_NET_1} area 0"
+    echo "br-rtr(config-router)#network 10.10.10.0/30 area 0"
+    echo "br-rtr(config-router)#exit"
+    echo "br-rtr(config)#interface tunnel.0"
+    echo "br-rtr(config-if-tunnel)#ip ospf authentication message-digest"
+    echo "br-rtr(config-if-tunnel)#ip ospf message-digest-key 1 md5 P@ssw0rd"
+    echo "br-rtr(config-if-tunnel)#exit"
+    echo "br-rtr(config)#write memory"
+
+    echo "br-rtr(config)#interface isp"
+    echo "br-rtr(config-if)#ip nat outside"
+    echo "br-rtr(config-if)#exit"
+
+    echo "br-rtr(config)#interface int1"
+    echo "br-rtr(config-if)#ip nat inside"
+    echo "br-rtr(config-if)#exit"
+
+    read -p "Введите пул адресов для BR-Net: (пример, 192.168.0.1-192.168.0.14)" BR_POOL_1
+
+    echo "br-rtr(config)#ip nat pool br-net ${BR_POOL_1}"
+    echo "br-rtr(config)#ip nat source dynamic inside-to-outside pool br-net overload interface isp"
+    echo "br-rtr(config)#exit"
+
+    echo "br-rtr(config)#write memory"
 
     echo ""
     echo -e "${CYAN}============ BR-RTR ============${NC}"

@@ -121,9 +121,6 @@ setup_full_isp() {
     echo -e -n "${CYAN}Укажите необходимые интерфесы для конфигурирования через пробел. (например, ens19 ens20):${NC}" 
     read INTERFACES
 
-
-    # Настройка интерфейсов
-
     for interface in $INTERFACES; do
         echo -e "${YELLOW}[3/5] Настройка интерфейса $interface...${NC}"
         mkdir -p /etc/net/ifaces/$interface

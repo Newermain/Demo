@@ -57,11 +57,10 @@ module1_menu() {
     while true; do
         clear
         echo -e "${CYAN}╔══════════════════════════════════════════════════════════════╗${NC}"
-        echo -e "${CYAN}║                       МОДУЛЬ 1 - СЕТЬ                         ║${NC}"
+        echo -e "${CYAN}║                       МОДУЛЬ 1 - СЕТЬ                        ║${NC}"
         echo -e "${CYAN}╚══════════════════════════════════════════════════════════════╝${NC}"
         echo ""
         echo "1) Настройка ISP"
-        echo "2) Настройка имени хоста и статического IP (все хосты. РУЧКАМИ НАХУЙ)"
         echo "3) Настройка DHCP-клиента (клиент)"
         echo "4) Настройка DNS-резолвера (HQ-SRV)"
         echo "5) Настройка VLAN на интерфейсе (BR и HQ RTRы)"
@@ -78,7 +77,6 @@ module1_menu() {
         
         case $choice in
             1) setup_full_isp ;;
-            2) setup_hostname_ip ;;
             3) setup_dhcp_client ;;
             4) setup_resolv_conf ;;
             5) setup_vlan ;;
@@ -165,7 +163,7 @@ EOF
     read INTERNAL_NETS
 
     ip -c --br -4 a
-    echo -e -n "${CYAN}Укажите ОСНОВНОЙ ИНТЕРФЕЙС, который показывает на WAN (Интернет)${NC} "
+    echo -e -n "${CYAN}Укажите ОСНОВНОЙ ИНТЕРФЕЙС, который показывает на WAN (Интернет) ${NC} "
     read EXT_IF
 
     # Добавление правил MASQUERADE
@@ -182,38 +180,6 @@ EOF
     echo -e "${GREEN}✓ Первоначальные настройки ISP выполнены, можно приступать к дальнейшему выполнению!${NC}"
     read -p "Нажми Enter..." 
 } 
-
-setup_hostname_ip() {
-    clear
-    echo -e "${BLUE}=== Настройка имени хоста и статического IP ===${NC}"
-    echo ""
-    
-    get_common_params
-    
-    echo -e "${BLUE}[1/3] Настройка имени хоста...${NC}"
-    hostnamectl set-hostname "$HOSTNAME"
-    echo "HOSTNAME=$HOSTNAME" > /etc/sysconfig/network
-    echo -e "${GREEN}✓ Имя хоста: $HOSTNAME${NC}"
-    
-    echo -e "${BLUE}[2/3] Настройка статического IP...${NC}"
-    mkdir -p /etc/net/ifaces/$INTERFACE
-    cat > /etc/net/ifaces/$INTERFACE/options <<EOF
-TYPE=eth
-BOOTPROTO=static
-DISABLED=no
-NM_CONTROLLED=no
-SYSTEMD_CONTROLLED=no
-EOF
-    echo "$IP_ADDR/$CIDR" > /etc/net/ifaces/$INTERFACE/ipv4address
-    echo "default via $GATEWAY" > /etc/net/ifaces/$INTERFACE/ipv4route
-    
-    echo -e "${BLUE}[3/3] Перезапуск сети...${NC}"
-    systemctl restart network
-    
-    echo -e "${GREEN}✓ Настройка завершена!${NC}"
-    ip a show $INTERFACE | grep inet
-    read -p "Нажми Enter..."
-}
 
 setup_dhcp_client() {
     clear

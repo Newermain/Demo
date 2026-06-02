@@ -197,12 +197,12 @@ setup_basic_routers() {
     read -p "Введите первый IP-адрес подсети вместе с маской (пример, 192.168.200.1/24) для HQ-RTR в сторону HQ-CLI: " HQ_IP_RTR_2
     read -p "Введите первый IP-адрес подсети вместе с маской (пример, 192.168.99.1/29) для HQ (управление): " HQ_IP_RTR_3
 
-    HQ_NET_1="${HQ_IP_RTR_1/\.[0-9]*\//.0/}"
-    HQ_NET_2="${HQ_IP_RTR_2/\.[0-9]*\//.0/}"
-    HQ_NET_3="${HQ_IP_RTR_3/\.[0-9]*\//.0/}"
+    HQ_NET_1="${HQ_IP_RTR_1%.*}.0/${HQ_IP_RTR_1#*/}"
+    HQ_NET_2="${HQ_IP_RTR_2%.*}.0/${HQ_IP_RTR_2#*/}"
+    HQ_NET_3="${HQ_IP_RTR_3%.*}.0/${HQ_IP_RTR_3#*/}"
 
     read -p "Введите первый IP-адрес подсети BR-Net (пример, 192.168.0.1/28): " BR_IP_NET_1
-    BR_NET_1="${BR_IP_NET_1/\.[0-9]*\//.0/}"
+    BR_NET_1="${BR_IP_NET_1%.*}.0/${BR_IP_NET_1#*/}"
 
     echo -e "${YELLOW}Напоминалка сети для HQ-RTR в сторону ISP: 172.16.70.0/28"
     echo -e "${YELLOW}Напоминалка сети для BR-RTR в сторону ISP: 172.16.80.0/28"
@@ -258,7 +258,7 @@ setup_basic_routers() {
     echo "hq-rtr(config-service-instance)#exit"
     echo "hq-rtr(config)#write memory"
 
-    echo -e "${CYAN}Создаем сервисные инстансы в сторону каждого созданного VLAN-интерфейса...${NC}"
+    echo -e "${CYAN}===== Создаем сервисные инстансы в сторону каждого созданного VLAN-интерфейса ========${NC}"
     echo -e "hq-rtr(config)#port te1"
     echo -e "hq-rtr(config-port)#service-instance te1/vl${HQ_VLAN_1}"
     echo -e "hq-rtr(config-service-instance)#encapsulation dot1q ${HQ_VLAN_1} exact"
@@ -277,6 +277,7 @@ setup_basic_routers() {
     echo -e "hq-rtr(config-service-instance)#rewrite pop 1"
     echo -e "hq-rtr(config-service-instance)#connect ip interface vl${HQ_VLAN_3}"
     echo -e "hq-rtr(config-service-instance)#exit"
+    echo -e "${CYAN}===== Создаем сервисные инстансы в сторону каждого созданного VLAN-интерфейса ========${NC}"
 
     echo -e "hq-rtr(config-port)#exit"
     echo -e "hq-rtr(config)#write memory"
@@ -322,9 +323,14 @@ setup_basic_routers() {
     echo "hq-rtr(config-if)#ip nat inside"
     echo "hq-rtr(config-if)#exit"
 
-    read -p "Введите пул адресов для VLAN${HQ_VLAN_1}: (пример, 192.168.100.1-192.168.100.30) " HQ_POOL_1
-    read -p "Введите пул адресов для VLAN${HQ_VLAN_2}: (пример, 192.168.200.1-192.168.200.254) " HQ_POOL_2
-    read -p "Введите пул адресов для VLAN${HQ_VLAN_3}: (пример, 192.168.99.1-192.168.99.6)" HQ_POOL_3
+    echo -e -n "${CYAN}Введите пул адресов для VLAN${HQ_VLAN_1} (пример, 192.168.100.1-192.168.100.30):  ${NC}"
+    read HQ_POOL_1
+
+    echo -e -n "${CYAN}Введите пул адресов для VLAN${HQ_VLAN_2} (пример, 192.168.200.1-192.168.200.254):  ${NC}"
+    read HQ_POOL_2
+
+    echo -e -n "${CYAN}Введите пул адресов для VLAN${HQ_VLAN_3} (пример, 192.168.99.1-192.168.99.6):  ${NC}"
+    read HQ_POOL_3
 
     echo "hq-rtr(config)#ip nat pool VLAN${HQ_VLAN_1} ${HQ_POOL_1}"
     echo "hq-rtr(config)#ip nat pool VLAN${HQ_VLAN_2} ${HQ_POOL_2}"
@@ -336,7 +342,8 @@ setup_basic_routers() {
     echo "hq-rtr(config)#exit"
     echo "hq-rtr(config)#write memory"
 
-    echo "---- КОНФИГУР DHCP:"
+    echo -e "${YELLOW}===== КОНФИГУРИРОВАНИЕ DHCP НА HQ-RTR ======= {$NC}"
+    
     echo "hq-rtr(config)#ip pool VLAN${HQ_VLAN_2} ${HQ_POOL_2}"
     echo "hq-rtr(config)#dhcp-server 1"
     echo "hq-rtr(config-dhcp-server)#pool VLAN${HQ_VLAN_2} 1"
@@ -350,6 +357,8 @@ setup_basic_routers() {
     echo "hq-rtr(config)#interface vl${HQ_VLAN_2}"
     echo "hq-rtr(config-if)#dhcp-server 1"
     echo "hq-rtr(config-if)#exit"
+
+    echo -e "${YELLOW}===== КОНФИГУРИРОВАНИЕ DHCP НА HQ-RTR ======= {$NC}"
 
     echo "hq-rtr(config)#write memory"
 
